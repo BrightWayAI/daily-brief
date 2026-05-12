@@ -10,7 +10,7 @@ This is Phase 1 of the second-brain v2 extension. The brief is the surface that 
 
 ## Install
 
-This plugin lives in the [BrightWay AI marketplace](https://github.com/BrightWayAI/claude-plugins). Install via Cowork or Claude Code's plugin marketplace mechanism, pointed at that marketplace.
+This plugin lives in the [BrightWay AI marketplace](https://github.com/BrightWayAI/nucleus). Install via Cowork or Claude Code's plugin marketplace mechanism, pointed at that marketplace.
 
 Standalone install (less common): `gh repo clone BrightWayAI/daily-brief` into your plugin directory.
 
