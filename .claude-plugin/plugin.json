@@ -1,0 +1,10 @@
+{
+  "name": "daily-brief",
+  "version": "0.1.0",
+  "description": "Live daily working surface as a Cowork artifact. /brief pulls today's calendar, inbox, CRM tasks, outreach queue, and yesterday's reflection into a single artifact titled \"Today's Brief\" with textarea annotations per item. /process-brief reads back the annotations and routes them — drafts replies in Gmail, moves CRM tasks, adds meeting talking points. /setup-brief captures section preferences. Configurable per user via /setup-brief.",
+  "author": {
+    "name": "BrightWay AI"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/BrightWayAI/daily-brief"
+}

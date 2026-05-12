@@ -1,0 +1,311 @@
+<!--
+  brief-artifact-template.html — daily-brief plugin
+
+  Rendered by the /brief skill into a Cowork artifact titled "Today's Brief".
+  The skill replaces tokens of the form {{TOKEN}} and the repeating-block
+  comments below with real data. Each annotation <textarea> gets a unique
+  data-item-id and name so Cowork's read_widget_context can return the
+  annotation values keyed by item ID.
+
+  Template tokens:
+    {{TODAY_LOCAL}}                 e.g., 2026-05-12
+    {{GENERATED_AT}}                ISO timestamp
+    {{TIMEZONE_LABEL}}              e.g., "America/New_York"
+    {{HINT_MEETING}}                placeholder hint text
+    {{HINT_INBOX}}
+    {{HINT_TASK}}
+    {{HINT_OUTREACH}}
+    {{YESTERDAY_REFLECTION_HTML}}   pre-rendered <ul>...</ul> or "No reflection logged"
+    {{PROCESS_PROMPT}}              text sent on Process click; default "Process the annotations in Today's Brief"
+
+  Repeating-block markers (replace the whole comment-block with N rendered cards):
+    <!-- BEGIN MEETINGS --> ... <!-- END MEETINGS -->
+    <!-- BEGIN INBOX --> ... <!-- END INBOX -->
+    <!-- BEGIN TASKS --> ... <!-- END TASKS -->
+    <!-- BEGIN OUTREACH --> ... <!-- END OUTREACH -->
+
+  Section-level toggles: if a section is disabled in user-context, omit the
+  entire <section> element. If a section is enabled but empty AND empty_state
+  for that section is "hide", omit the section. Otherwise render the section
+  card with a single "Nothing today" placeholder line.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Today's Brief — {{TODAY_LOCAL}}</title>
+  <style>
+    :root {
+      --bg: #fafaf9;
+      --card: #ffffff;
+      --border: #e7e5e4;
+      --muted: #78716c;
+      --text: #1c1917;
+      --accent: #0f766e;
+      --accent-soft: #ccfbf1;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 24px;
+      line-height: 1.5;
+    }
+    header {
+      max-width: 880px;
+      margin: 0 auto 24px;
+    }
+    header h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    header .meta {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    main {
+      max-width: 880px;
+      margin: 0 auto;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+    }
+    section h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .item {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+    .item:first-of-type {
+      border-top: none;
+      padding-top: 0;
+      margin-top: 0;
+    }
+    .item-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .item-meta {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+    .item-context {
+      font-size: 14px;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+    textarea.annotation {
+      width: 100%;
+      min-height: 48px;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 14px;
+      resize: vertical;
+      background: #fdfdfc;
+    }
+    textarea.annotation:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+      font-style: italic;
+    }
+    .read-only-card {
+      background: #fafaf9;
+    }
+    .eod-prompt {
+      margin-top: 12px;
+    }
+    .eod-prompt label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .button-row {
+      max-width: 880px;
+      margin: 12px auto 32px;
+      text-align: right;
+    }
+    button.process {
+      background: var(--accent);
+      color: #ffffff;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.process:hover {
+      background: #0d5e57;
+    }
+    .section-tag {
+      display: inline-block;
+      font-size: 11px;
+      color: var(--muted);
+      background: #f5f5f4;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Today's Brief — {{TODAY_LOCAL}}</h1>
+    <div class="meta">Generated {{GENERATED_AT}} · Time zone: {{TIMEZONE_LABEL}}</div>
+  </header>
+
+  <main>
+    <!-- ============== SECTION 1 — MEETINGS ============== -->
+    <section data-section="meetings">
+      <h2>1. Today's meetings <span class="section-tag">calendar + cortex</span></h2>
+
+      <!-- BEGIN MEETINGS -->
+      <div class="item" data-item-id="meeting-{{MEETING_ID}}">
+        <div class="item-title">{{MEETING_TIME}} — {{MEETING_TITLE}}</div>
+        <div class="item-meta">With: {{MEETING_ATTENDEES}}{{MEETING_LOCATION_SUFFIX}}</div>
+        <div class="item-context">{{MEETING_CONTEXT}}</div>
+        <textarea class="annotation"
+                  name="meeting-{{MEETING_ID}}"
+                  data-item-id="meeting-{{MEETING_ID}}"
+                  placeholder="{{HINT_MEETING}}"></textarea>
+      </div>
+      <!-- END MEETINGS -->
+
+      <!-- If zero meetings and empty_state == show_empty, render:
+        <p class="empty">Nothing today.</p>
+      -->
+    </section>
+
+    <!-- ============== SECTION 2 — INBOX ============== -->
+    <section data-section="inbox">
+      <h2>2. Inbox action items <span class="section-tag">gmail + triage</span></h2>
+
+      <!-- BEGIN INBOX -->
+      <div class="item" data-item-id="inbox-{{THREAD_ID}}">
+        <div class="item-title">{{INBOX_SENDER}} — {{INBOX_SUBJECT}}</div>
+        <div class="item-meta">Received {{INBOX_RECEIVED}}</div>
+        <div class="item-context">{{INBOX_SNIPPET}}</div>
+        <div class="item-context"><em>Suggested framing:</em> {{INBOX_SUGGESTED_FRAMING}}</div>
+        <textarea class="annotation"
+                  name="inbox-{{THREAD_ID}}"
+                  data-item-id="inbox-{{THREAD_ID}}"
+                  placeholder="{{HINT_INBOX}}"></textarea>
+      </div>
+      <!-- END INBOX -->
+    </section>
+
+    <!-- ============== SECTION 3 — PRIORITY TASKS ============== -->
+    <section data-section="tasks">
+      <h2>3. Today's priority tasks <span class="section-tag">CRM</span></h2>
+
+      <!-- BEGIN TASKS -->
+      <div class="item" data-item-id="task-{{TASK_ID}}">
+        <div class="item-title">{{TASK_TITLE}}</div>
+        <div class="item-meta">Due {{TASK_DUE}} · {{TASK_RELATED}} · Priority {{TASK_PRIORITY}}</div>
+        <textarea class="annotation"
+                  name="task-{{TASK_ID}}"
+                  data-item-id="task-{{TASK_ID}}"
+                  placeholder="{{HINT_TASK}}"></textarea>
+      </div>
+      <!-- END TASKS -->
+    </section>
+
+    <!-- ============== SECTION 4 — OUTREACH QUEUE ============== -->
+    <section data-section="outreach">
+      <h2>4. Outreach queue <span class="section-tag">weekly-outreach</span></h2>
+
+      <!-- BEGIN OUTREACH -->
+      <div class="item">
+        <div class="item-title">{{OUTREACH_NAME}} — {{OUTREACH_COMPANY}}</div>
+        <div class="item-meta">Last touch: {{OUTREACH_LAST_TOUCH}} · Status: {{OUTREACH_STATUS}}</div>
+      </div>
+      <!-- END OUTREACH -->
+
+      <textarea class="annotation"
+                name="outreach-group"
+                data-item-id="outreach-group"
+                placeholder="{{HINT_OUTREACH}}"></textarea>
+    </section>
+
+    <!-- ============== SECTION 5 — DRAFTS AWAITING APPROVAL ============== -->
+    <section data-section="drafts" class="read-only-card">
+      <h2>5. Drafted replies awaiting approval <span class="section-tag">filled by /process-brief</span></h2>
+      <p class="empty">Drafts will appear here after you run <code>/process-brief</code>.</p>
+      <!-- After /process-brief runs, this section is replaced with a list of:
+        <div class="item">
+          <div class="item-title">✓ {{ACTION_LABEL}}</div>
+          <div class="item-meta">{{ACTION_DETAIL}} · {{ACTION_LINK_HTML}}</div>
+        </div>
+      -->
+    </section>
+
+    <!-- ============== SECTION 6 — YESTERDAY'S REFLECTION ============== -->
+    <section data-section="yesterday-reflection" class="read-only-card">
+      <h2>6. Yesterday's reflection <span class="section-tag">read-only</span></h2>
+      {{YESTERDAY_REFLECTION_HTML}}
+    </section>
+
+    <!-- ============== SECTION 7 — END-OF-DAY PROMPTS ============== -->
+    <section data-section="eod-prompts">
+      <h2>7. End-of-day prompts <span class="section-tag">filled by /end-day</span></h2>
+
+      <div class="eod-prompt">
+        <label for="eod-prompt-1">What got done today?</label>
+        <textarea class="annotation"
+                  id="eod-prompt-1"
+                  name="eod-prompt-1"
+                  data-item-id="eod-prompt-1"
+                  placeholder="Highlights, decisions, work shipped"></textarea>
+      </div>
+
+      <div class="eod-prompt">
+        <label for="eod-prompt-2">What's still open?</label>
+        <textarea class="annotation"
+                  id="eod-prompt-2"
+                  name="eod-prompt-2"
+                  data-item-id="eod-prompt-2"
+                  placeholder="Threads not yet closed, blockers, decisions deferred"></textarea>
+      </div>
+
+      <div class="eod-prompt">
+        <label for="eod-prompt-3">What's the first thing tomorrow?</label>
+        <textarea class="annotation"
+                  id="eod-prompt-3"
+                  name="eod-prompt-3"
+                  data-item-id="eod-prompt-3"
+                  placeholder="The one thing to start with — concrete, not vague"></textarea>
+      </div>
+    </section>
+  </main>
+
+  <div class="button-row">
+    <button class="process"
+            type="button"
+            onclick="window.sendPrompt && window.sendPrompt('{{PROCESS_PROMPT}}')">
+      Process all annotations
+    </button>
+  </div>
+</body>
+</html>
