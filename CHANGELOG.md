@@ -4,6 +4,18 @@ All notable changes to daily-brief are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions match `plugin.json`.
 
+## [0.2.0] — Absorbed plan-tomorrow (2026-05-12)
+
+### Added
+- **`/plan-tomorrow` command + skill folded in from the deprecated standalone plan-tomorrow plugin.** Same data sources (CRM tasks, cortex memory, inbox action items, calendar) the daily-brief was already pulling — different verb, different output (creates calendar blocks for the next business day). Pulls together the daily ops loop in one plugin instead of two.
+- **`/setup-plan` command + skill** moved alongside, configures /plan-tomorrow's working hours, CRM ownership, calendar conventions.
+- **User-context backward compatibility.** /plan-tomorrow continues reading `<config-root>/plugins/plan-tomorrow.user-context.md` exactly as it did in the standalone plugin — no migration required for existing users.
+
+### Why this matters
+Daily-brief and plan-tomorrow shared ~90% of their data sources. Two plugins for one ops loop added decision cost ("which do I run?") without adding capability. Folding them keeps both verbs (today's working surface + tomorrow's calendar planning) but reduces the marketplace catalog by one and clarifies the mental model.
+
+The standalone `BrightWayAI/plan-tomorrow` GitHub repo is being archived (read-only). Anyone who had it installed via the marketplace will see the deprecation notice; new installs should use daily-brief.
+
 ## [0.1.0] — Initial release (2026-05-12)
 
 ### Added

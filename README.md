@@ -1,6 +1,8 @@
 # daily-brief
 
-> Live daily working surface for your business. One Cowork artifact, seven sections, annotated by you and acted on by Claude.
+> Your daily flow — today's working surface + tomorrow's calendar planning in one plugin.
+
+**As of v0.2.0**, daily-brief absorbs the deprecated `plan-tomorrow` plugin. One home for the daily ops loop: `/brief` and `/process-brief` for today, `/plan-tomorrow` for tomorrow.
 
 Pulls today's calendar, inbox action items, CRM priority tasks, outreach queue, yesterday's reflection — into a single Cowork artifact titled "Today's Brief." You open it once a day, write short instructions into the textareas under each item ("draft reply: short ack + my view," "move to tomorrow," "ask about pricing"), and then run `/process-brief`. Claude reads your annotations and acts: drafts replies in Gmail, reschedules tasks in your CRM, appends talking points to meeting prep — all as drafts and reversible updates, never sends.
 
@@ -26,7 +28,9 @@ Standalone install (less common): `gh repo clone BrightWayAI/daily-brief` into y
 |---|---|
 | `/brief` | Generate or refresh today's brief artifact and markdown snapshot. Read-only across sources. |
 | `/process-brief` | Read your annotations off the artifact and route each one — drafts, reschedules, talking points, dismissals. |
-| `/setup-brief` | Configure the plugin. Re-run anytime to update. |
+| `/plan-tomorrow` | Calendar-first daily planning. Pulls CRM tasks, working memory, and inbox action items, then creates time blocks on your calendar with full context baked in. The calendar IS the plan. |
+| `/setup-brief` | Configure the daily brief sections, sort defaults, annotation placeholder hints. Re-run anytime. |
+| `/setup-plan` | Configure plan-tomorrow's CRM ownership, working hours, calendar conventions, and companion-plugin integrations. Re-run anytime. |
 
 ## How it works
 
