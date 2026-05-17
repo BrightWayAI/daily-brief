@@ -54,9 +54,13 @@ Pull today's calendar via the connected calendar MCP. For each event:
   - Look for `<config-root>/memory/person/<firstname>-<lastname>.md` (if Phase 3 person pages exist)
   - Fall back to `<config-root>/memory/client/<slug>.md` if the attendee's company appears in any client node
   - Capture: most recent activity date, last known thread, any open commitments to / from this person
-- Skip blocked time and personal events the user has flagged personal (configurable later — for v1, include all events; the artifact has a per-item annotation that can say "personal — hide").
+- Skip blocked time and personal events the user has flagged personal (configurable later — for v1, include all events).
 
 Sort per config (default: `start_time_asc`).
+
+**Meetings are read-only context cards as of daily-brief v0.3.0.** The annotation textarea per meeting was removed — talking-point annotations didn't route to anything more useful than a bullet append to the markdown file, and the empty textareas were the loudest source of "process-brief overhead" UX friction. To add prep notes for a meeting, edit the markdown snapshot directly or use cortex `/recall <person>` to surface context.
+
+If there are no meetings today, hide the entire section in the artifact (don't render an empty card).
 
 ### Section 2 — Inbox action items
 
@@ -88,18 +92,17 @@ If `weekly-outreach` plugin is installed and has produced a current week's queue
 
 ### Section 5 — Drafted replies awaiting approval
 
-This section is populated by `/process-brief`. On a fresh `/brief` run, it's empty. Render an empty placeholder card so the layout is stable: "Drafts will appear here after you run `/process-brief`."
+This section is populated by `/process-brief`. **Hide entirely on a fresh `/brief` run when no drafts exist** (daily-brief v0.3.0 — don't show a placeholder for nothing). Render only after `/process-brief` has produced at least one draft today; thereafter the section persists until the next morning's brief regenerates.
 
 ### Section 6 — Yesterday's reflection
 
 Read `<config-root>/briefs/<yesterday_local>.md` if it exists.
 
-- **Exists** → extract the "End-of-day prompts" responses if present. Display read-only: what got done, what's open, what to start with tomorrow.
-- **Missing** → "No reflection logged yesterday."
+- **Exists with a `## Reflection` section** (appended by yesterday's `/end-day`) → display the reflection content read-only.
+- **Exists without a `## Reflection` section** (yesterday's `/end-day` wasn't run) → "No reflection logged yesterday — run `/end-day` next time to capture one."
+- **Missing** → "No brief yesterday."
 
-### Section 7 — End-of-day prompts
-
-Three read-only placeholders during the morning brief generation. They become writable inputs when `/end-day` is run later. For now: render three empty textareas with placeholders ("What got done today?", "What's still open?", "What's the first thing tomorrow?").
+End-of-day reflection capture moved to cortex's `/end-day` Step 4 as of daily-brief v0.3.0 — the brief no longer carries empty reflection textareas. Reflection prompts live where reflection actually happens.
 
 ---
 
@@ -118,9 +121,9 @@ Write the assembled brief content to `<config-root>/briefs/<today_local>.md`. Us
 - **With:** <attendee list>
 - **Context:** <cortex snippet, 1-2 lines>
 - **Open thread:** <if any>
-- **Annotation:** _(empty — filled in artifact)_
 
-(repeat per meeting)
+(repeat per meeting — read-only context, no annotation)
+(omit this whole section if zero meetings)
 
 ## 2. Inbox action items
 
@@ -130,7 +133,7 @@ Write the assembled brief content to `<config-root>/briefs/<today_local>.md`. Us
 - **Suggested framing:** <1-2 lines from inbox-triage if available>
 - **Annotation:** _(empty)_
 
-(repeat)
+(repeat — omit section if zero items)
 
 ## 3. Priority tasks
 
@@ -140,23 +143,21 @@ Write the assembled brief content to `<config-root>/briefs/<today_local>.md`. Us
 
 - **Annotation per task:** _(empty)_
 
+(omit section if zero tasks)
+
 ## 4. Outreach queue
 
-(list — or "No outreach scheduled today")
+(list — omit section if no outreach scheduled today)
 
 ## 5. Drafted replies awaiting approval
 
-_(populated by /process-brief)_
+(omit section if no drafts yet; populated by /process-brief)
 
 ## 6. Yesterday's reflection
 
-<content from yesterday's brief — or "No reflection logged yesterday">
+<content from yesterday's brief's `## Reflection` section, or "No reflection logged yesterday">
 
-## 7. End-of-day prompts
-
-- **What got done today?** _(empty)_
-- **What's still open?** _(empty)_
-- **What's the first thing tomorrow?** _(empty)_
+(end-of-day prompts removed in v0.3.0 — reflection is captured by cortex /end-day Step 4 instead)
 ```
 
 Create the `<config-root>/briefs/` directory if it doesn't exist. Overwrite today's file if it already exists (re-runs replace; yesterday's file is untouched).

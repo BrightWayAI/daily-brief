@@ -4,6 +4,28 @@ All notable changes to daily-brief are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions match `plugin.json`.
 
+## [0.3.0] — Cleanup pass: remove brief overhead (2026-05-16)
+
+### Why this exists
+Real-user feedback: `/brief` and `/process-brief` "feel like overhead" — the artifact suggests there's lots to act on, but most of the annotation fields don't route to anything actionable. Empty motions train you to ignore the ritual. This release cuts the no-op surfaces so what's left is the actionable spine.
+
+### Removed
+- **Section 7 (end-of-day prompts) is gone from `/brief`.** Three reflection textareas at brief-generation time were dead weight — you don't fill them until end-of-day, and only after running `/end-day`. Reflection capture is now owned by cortex `/end-day` Step 4 (which appends a `## Reflection` section to the day's brief markdown). Tomorrow's `/brief` Section 6 reads from there.
+- **Meeting annotation textareas removed.** Meeting cards are now read-only context cards. The old `add_talking_point` annotation appended a bullet to the markdown snapshot — not useful enough to justify a textarea per meeting. Use cortex `/recall <person>` for prep context instead.
+- **`add_talking_point` action removed from `/process-brief` classifier.** Three real actions remain (`draft_reply`, `reschedule_task`, `draft_outreach`) plus `dismiss` and `clarify`.
+
+### Changed
+- **Empty sections now auto-hide in the artifact.** If you have zero meetings, the meetings section doesn't render at all. Same for inbox, tasks, outreach. The brief shrinks to what's actually present today instead of carrying empty placeholders.
+- **Section 5 (drafted replies awaiting approval) hides when empty.** Only renders after `/process-brief` has produced drafts today.
+
+### Migration
+- No user action required. Re-running `/brief` regenerates the markdown snapshot and artifact in the new shape.
+- Yesterday's brief Section 7 entries (if any) are still preserved in their markdown snapshots — the v0.3.0 brief just doesn't generate new ones.
+- `daily-brief.user-context.md` is unchanged; no setup migration.
+
+### Why this matters
+The brief should be a working surface where every visible item is something you can act on. Empty annotation fields with no downstream action erode trust in the artifact. After this release, what's on-screen is what the system can actually do — and the ritual stops feeling like overhead.
+
 ## [0.2.0] — Absorbed plan-tomorrow (2026-05-12)
 
 ### Added

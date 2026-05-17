@@ -48,10 +48,11 @@ For each `(item_id, annotation_text)` pair, classify the user's intent. Use a sm
 |---|---|---|
 | "draft reply" / "reply: ..." / "draft response ..." | `draft_reply` | bizdev-outreach skill (or lead-engine for sales-context threads) |
 | "move to tomorrow" / "move to <date>" | `reschedule_task` | HubSpot MCP (CRM task update_date) — only valid for task items |
-| "add talking point: X" / "ask about X" / "bring up X" | `add_talking_point` | append to meeting card in markdown snapshot |
 | "skip" / "ignore" / "I'll handle this" / "dismiss" | `dismiss` | log only; no downstream action |
 | "draft outreach" / "send DM" (for outreach-group only) | `draft_outreach` | weekly-outreach or lead-engine draft skill |
 | Anything else / ambiguous | `clarify` | ask the user a one-line follow-up in chat |
+
+**Note:** `add_talking_point` (formerly for meeting annotations) was removed in daily-brief v0.3.0 — meetings are now read-only context cards in `/brief`. Use cortex `/recall <person>` for prep context instead, or edit the markdown snapshot directly.
 
 Two-stage triage: classify cheaply first (Haiku-class, just the text + a one-word menu), then dispatch only the items that need synthesis (draft_reply, draft_outreach) to Sonnet-tier work. Items that are pure routing (reschedule_task, dismiss) don't need synthesis at all.
 
@@ -77,13 +78,6 @@ Hand off to the relevant outreach plugin's draft skill (weekly-outreach if insta
 1. Parse the date from `annotation_text` ("tomorrow", "next Monday", explicit ISO date).
 2. Update the CRM task's due date via HubSpot MCP `manage_crm_objects` (or `update_records_for_table` for non-HubSpot CRMs).
 3. Confirm with the user inline only if the parsed date is more than 14 days in the future (sanity check).
-
-### add_talking_point (meeting item)
-
-1. Open the markdown snapshot at `<config-root>/briefs/<today_local>.md`.
-2. Find the matching meeting's card under section 1.
-3. Append the talking point as a bullet under a `**Talking points (added via /process-brief):**` sub-section. Idempotent: don't double-add if the same text already exists there.
-4. Mark the artifact for regeneration of that section's card (Step 5).
 
 ### dismiss
 

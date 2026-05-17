@@ -1,7 +1,7 @@
 {
   "name": "daily-brief",
-  "version": "0.2.0",
-  "description": "Daily flow plugin — owns /brief (today's working surface as a Cowork artifact), /process-brief (route textarea annotations to drafts, task updates, meeting talking points), and /plan-tomorrow (calendar-first planning of the next business day). As of v0.2.0, absorbs the deprecated standalone plan-tomorrow plugin. Configurable via /setup-brief and /setup-plan.",
+  "version": "0.3.0",
+  "description": "Daily flow plugin — owns /brief (today's working surface as a Cowork artifact), /process-brief (route textarea annotations to drafts, task updates, and outreach drafts), and /plan-tomorrow (calendar-first planning of the next business day). v0.3.0 cleanup pass: meetings are now read-only context cards, empty sections auto-hide, and Section 7 (end-of-day prompts) moved into cortex /end-day where reflection actually happens. Configurable via /setup-brief and /setup-plan.",
   "author": {
     "name": "BrightWay AI"
   },

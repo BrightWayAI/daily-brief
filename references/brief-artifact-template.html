@@ -11,10 +11,10 @@
     {{TODAY_LOCAL}}                 e.g., 2026-05-12
     {{GENERATED_AT}}                ISO timestamp
     {{TIMEZONE_LABEL}}              e.g., "America/New_York"
-    {{HINT_MEETING}}                placeholder hint text
     {{HINT_INBOX}}
     {{HINT_TASK}}
     {{HINT_OUTREACH}}
+    (HINT_MEETING removed in v0.3.0 — meetings are read-only context cards)
     {{YESTERDAY_REFLECTION_HTML}}   pre-rendered <ul>...</ul> or "No reflection logged"
     {{PROCESS_PROMPT}}              text sent on Process click; default "Process the annotations in Today's Brief"
 
@@ -182,16 +182,14 @@
       <h2>1. Today's meetings <span class="section-tag">calendar + cortex</span></h2>
 
       <!-- BEGIN MEETINGS -->
-      <div class="item" data-item-id="meeting-{{MEETING_ID}}">
+      <div class="item read-only-card" data-item-id="meeting-{{MEETING_ID}}">
         <div class="item-title">{{MEETING_TIME}} — {{MEETING_TITLE}}</div>
         <div class="item-meta">With: {{MEETING_ATTENDEES}}{{MEETING_LOCATION_SUFFIX}}</div>
         <div class="item-context">{{MEETING_CONTEXT}}</div>
-        <textarea class="annotation"
-                  name="meeting-{{MEETING_ID}}"
-                  data-item-id="meeting-{{MEETING_ID}}"
-                  placeholder="{{HINT_MEETING}}"></textarea>
       </div>
       <!-- END MEETINGS -->
+      <!-- Meeting annotations removed in v0.3.0 — meetings are read-only context cards. -->
+      <!-- Use cortex /recall <person> for deeper prep context. -->
 
       <!-- If zero meetings and empty_state == show_empty, render:
         <p class="empty">Nothing today.</p>
@@ -267,37 +265,10 @@
       {{YESTERDAY_REFLECTION_HTML}}
     </section>
 
-    <!-- ============== SECTION 7 — END-OF-DAY PROMPTS ============== -->
-    <section data-section="eod-prompts">
-      <h2>7. End-of-day prompts <span class="section-tag">filled by /end-day</span></h2>
-
-      <div class="eod-prompt">
-        <label for="eod-prompt-1">What got done today?</label>
-        <textarea class="annotation"
-                  id="eod-prompt-1"
-                  name="eod-prompt-1"
-                  data-item-id="eod-prompt-1"
-                  placeholder="Highlights, decisions, work shipped"></textarea>
-      </div>
-
-      <div class="eod-prompt">
-        <label for="eod-prompt-2">What's still open?</label>
-        <textarea class="annotation"
-                  id="eod-prompt-2"
-                  name="eod-prompt-2"
-                  data-item-id="eod-prompt-2"
-                  placeholder="Threads not yet closed, blockers, decisions deferred"></textarea>
-      </div>
-
-      <div class="eod-prompt">
-        <label for="eod-prompt-3">What's the first thing tomorrow?</label>
-        <textarea class="annotation"
-                  id="eod-prompt-3"
-                  name="eod-prompt-3"
-                  data-item-id="eod-prompt-3"
-                  placeholder="The one thing to start with — concrete, not vague"></textarea>
-      </div>
-    </section>
+    <!-- Section 7 (end-of-day prompts) removed in v0.3.0. -->
+    <!-- Reflection capture now lives in cortex /end-day Step 4. -->
+    <!-- That step appends a ## Reflection section to today's brief markdown, -->
+    <!-- which tomorrow's brief Section 6 reads. -->
   </main>
 
   <div class="button-row">
