@@ -4,6 +4,55 @@ All notable changes to daily-brief are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions match `plugin.json`.
 
+## [0.4.0] — Interactive brief + canonical 6-section format (2026-05-28)
+
+Closes the brief-interactivity observation logged 2026-05-21 in workstream/nucleus-improvements: "the brief is read-only today; it should be a working surface — check off items, annotate inline, de-prioritize, and have state feed `/end-day`."
+
+### Added — interactive priority tasks
+- P0 tasks now have checkboxes keyed by `task-<task_id>`.
+- Checkbox state persists in browser localStorage under `brief-YYYY-MM-DD.tasks_checked`.
+- Sticky header includes a progress bar reflecting checked-off ratio in real time.
+- Only P0 tasks are shown in this card — P1+ are excluded to reduce clutter.
+
+### Added — tiered bizdev outreach queue
+- Outreach items grouped into 4 collapsible tiers: Today / Next week (≤ +7d) / Early next month (≤ +35d) / Backlog.
+- Each tier collapses independently; collapsed state persists in `brief-YYYY-MM-DD.outreach_tier_collapsed`.
+- Empty tiers hidden; whole card hidden if all tiers empty.
+
+### Added — day-at-a-glance timeline strip
+- Horizontal time strip (8am–6pm scale) above the meetings card.
+- Meeting blocks placed by time; click jumps to corresponding meetings-card item.
+
+### Changed — sticky header
+- Date badge, generated-at timestamp, total counts line, progress bar.
+- Sticky on scroll.
+
+### Changed — canonical artifact id
+- Artifact id is ALWAYS `todays-brief`. Both `/brief` and cortex `/end-day` Step 5 reference the same persistent surface. Closes the format-inconsistency observation from 2026-05-21.
+
+### Changed — /process-brief reads checked dictionary
+- Step 1 reads both annotations AND `tasks_checked` from widget context.
+- New Step 3.6: for every checked-off task, queue HubSpot status: COMPLETED with batch confirmation table.
+
+### Cortex contract (cortex v4.12.0)
+- Cortex `/end-day` Step 4 reads the checked dictionary via `read_widget_context`. The brief feeds `/end-day` — closes the working-surface loop.
+- Cortex `/end-day` Step 5 references this v0.4.0 format as canonical render target.
+
+### Canonical 6-section format (locked)
+1. Sticky header (always visible)
+2. Day-at-a-glance timeline strip (always visible)
+3. Meetings card (read-only; hide if empty)
+4. Priority tasks card (interactive — P0 only, checkboxes + progress bar; hide if empty)
+5. Bizdev outreach queue (tiered; hide if all tiers empty)
+6. Yesterday's reflection (read-only; always visible — placeholder if missing)
+
+### Out of scope for v0.4
+- De-prioritize on-the-fly (drag to reorder)
+- Multi-day state persistence (rotates by date)
+- Bulk-action toolbar
+
+---
+
 ## [0.3.0] — Cleanup pass: remove brief overhead (2026-05-16)
 
 ### Why this exists
