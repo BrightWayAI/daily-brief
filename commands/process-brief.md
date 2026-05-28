@@ -30,13 +30,21 @@ Read `<config-root>/briefs/<today_local>.md`.
 
 ---
 
-## Step 1 — Read the artifact's current state
+## Step 1 — Read the artifact's current state (v0.4.0+ interactive)
 
-Locate the Cowork artifact titled "Today's Brief" via `mcp__cowork__list_artifacts` (or equivalent). Call `mcp__cowork__read_widget_context` to get the current values of every annotation textarea.
+Locate the Cowork artifact by id `todays-brief` (canonical id as of v0.4.0; previously titled "Today's Brief"). Call `mcp__cowork__read_widget_context` to get the current state — both annotation textareas AND the new interactive state.
 
 In Claude Code (no Cowork artifact tools available): stop with a clear message — "`/process-brief` requires Cowork artifact tools. In Claude Code, edit `<config-root>/briefs/<today_local>.md` directly and call the relevant draft / update commands manually." This is a known v1 limitation.
 
-The artifact returns a dictionary keyed by item ID (`meeting-<event_id>`, `inbox-<thread_id>`, `task-<task_id>`, `outreach-group`, `eod-prompt-1` / `eod-prompt-2` / `eod-prompt-3`). Empty values are filtered out; only non-empty annotations are processed.
+The artifact's widget context returns:
+1. **Annotations dictionary** keyed by item ID (`meeting-<event_id>`, `inbox-<thread_id>`, `task-<task_id>`, `outreach-<contact_id>`). Empty annotations are filtered out.
+2. **Tasks checked dictionary** (v0.4.0+) keyed by `task-<task_id>` → boolean. From localStorage `brief-YYYY-MM-DD.tasks_checked`. Indicates which P0 tasks the user has marked complete during the day.
+3. **Outreach tier collapsed states** (v0.4.0+) — render-only state, ignored by /process-brief.
+
+Both streams feed Step 2 classification. **Checked-off tasks are NOT annotations** — they're a separate signal. Their handling differs:
+- A task checked-off WITHOUT an annotation = "I completed this; no further action needed."
+- A task checked-off WITH an annotation = both signals fire; annotation routes per Step 2 classification, checkbox routes per Step 3.6 (new — see below).
+- A task UNchecked WITH an annotation = annotation routes; checkbox state means "not done yet."
 
 ---
 
@@ -92,6 +100,31 @@ Do nothing else.
 ### clarify
 
 Already handled in Step 2 — by the time you reach Step 3, the user has answered. Re-classify based on the answer and re-route to the appropriate action.
+
+---
+
+## Step 3.6 — Mark checked-off tasks complete in CRM (v0.4.0+)
+
+For every task in the checked dictionary where `checked == true`:
+
+1. Verify the task still exists in CRM (`hubspot:get_crm_object` for the task ID).
+2. Look up the task's current status. If already `COMPLETED` → no-op (idempotent).
+3. Otherwise, queue a status update: `status: COMPLETED` + `completion_date: today_local`.
+4. Batch updates: collect all check-completion intents from this run, present as a confirmation table:
+   ```
+   The following P0 tasks were checked off in today's brief:
+     · "Send proposal to Vector" (task-12345) → mark COMPLETED?
+     · "Reply to Sarah on intro request" (task-67890) → mark COMPLETED?
+
+   [Y]es to all · [N]o to all · [E]dit (toggle per row)
+   ```
+5. On Y → batch HubSpot update. Report successes/failures.
+6. On N → no CRM writes; localStorage state still persists (the user knows they did it; CRM just stays out-of-sync until next sync).
+7. On E → per-row toggle, then batch.
+
+If `weekly-outreach` is installed and any checked-off task is associated with an outreach contact, also append to the outreach state: "(completed via brief checkbox 2026-05-28)" so the weekly queue reflects it.
+
+This is the new "interactive brief feeds /end-day" path: `/end-day` Step 4 reads the same checked dictionary and knows what got done without re-asking. The brief becomes a living working surface, not a morning snapshot.
 
 ---
 

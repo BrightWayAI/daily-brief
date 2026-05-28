@@ -164,9 +164,58 @@ Create the `<config-root>/briefs/` directory if it doesn't exist. Overwrite toda
 
 ---
 
-## Step 3 — Render the Cowork artifact
+## Step 3 — Render the Cowork artifact (v0.4.0 canonical 6-section format)
+
+**Artifact identity rule (v0.4.0+):** the artifact id is ALWAYS `todays-brief`. Both `/brief` and cortex `/end-day` Step 5 reference the same persistent surface. Never create a new artifact with a different id; never produce a markdown-only fallback when Cowork is available.
 
 Load the HTML template from `references/brief-artifact-template.html` (bundled with the plugin source). Substitute template placeholders with today's data — section by section. Each annotation field becomes a real `<textarea>` with the configured placeholder hint.
+
+### Canonical 6-section format (v0.4.0 — closes workstream/nucleus-improvements observation 2026-05-21)
+
+The artifact MUST include these sections in this order. Sections with zero content are hidden (cleaner surface) UNLESS the section is required (header, yesterday's reflection).
+
+1. **Sticky header** — date badge, "generated at" timestamp, total counts line ("3 meetings · 5 inbox items · 7 tasks · 4 outreach"), and a progress bar reflecting checked-off priority tasks. Always visible (sticky on scroll).
+
+2. **Day-at-a-glance timeline strip** — horizontal strip with meeting blocks placed by time (8am-6pm scale). Each block links to the corresponding meeting card below on click. Quick visual of "how booked is today." Always visible; renders empty timeline if no meetings.
+
+3. **Meetings card** — per-meeting context blocks. **Read-only** as of v0.3.0 (no annotation textareas; use cortex `/recall <person>` for prep). Hide if zero meetings.
+
+4. **Priority tasks card — INTERACTIVE (v0.4.0)** — P0 tasks only. Each row:
+   - **Interactive checkbox** keyed by task ID. State persists in localStorage (`brief-YYYY-MM-DD.tasks.<task_id>`).
+   - Task title, due date, related contact/deal, priority badge.
+   - Per-task annotation textarea (existing behavior).
+   - Progress bar in sticky header reflects checked-off ratio in real time.
+   - **P1 and lower tasks are NOT shown in this card.** Reduces clutter; surfaces only what matters today.
+   - Hide card if zero P0 tasks.
+
+5. **Bizdev outreach queue — TIERED (v0.4.0)** — outreach items grouped into 4 collapsible tiers:
+   - **Today** — items scheduled or flagged for today
+   - **Next week** — items with `due_date <= today + 7d` or weekly-cadence overdue items
+   - **Early next month** — items with `due_date <= today + 35d`
+   - **Backlog** — everything else flagged but not date-scoped
+   
+   Each item: contact name, company, last touch, draft status (drafted / pending / sent). Per-item annotation textarea preserved.
+   
+   Hide tiers with zero items. Hide the whole card if all tiers empty.
+
+6. **Yesterday's reflection (read-only)** — content from yesterday's `## Reflection` (written by cortex `/end-day` Step 4). Always visible (renders "No reflection logged yesterday" placeholder if missing).
+
+### Interactive state contract (v0.4.0+)
+
+The artifact maintains state in browser `localStorage` keyed by the brief's date:
+
+```javascript
+localStorage.setItem("brief-YYYY-MM-DD", JSON.stringify({
+  tasks_checked: { "task-12345": true, "task-67890": false, ... },
+  annotations: { "inbox-thread-id": "draft reply: ...", "task-12345": "moved to tomorrow", ... },
+  outreach_tier_collapsed: { today: false, next_week: false, early_next_month: true, backlog: true },
+  last_interaction_at: "2026-05-28T14:32:00-04:00"
+}));
+```
+
+**State persists across the day.** Re-running `/brief` mid-day preserves checkbox state and annotations (see Step 3a below). The day's checked-off-task ratio drives the progress bar in the sticky header.
+
+**State is read by `/end-day`**: cortex `/end-day` Step 4 (Reflective prompts) can read `localStorage.getItem("brief-<today_local>")` via `mcp__cowork__read_widget_context` to know what got done. This closes the loop — the brief is a living surface, not a one-shot snapshot.
 
 Decide create vs. update:
 
