@@ -4,6 +4,37 @@ All notable changes to daily-brief are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions match `plugin.json`.
 
+## [0.4.1] — Canonical localStorage shape lock + brief.md / process-brief.md alignment (2026-05-28)
+
+Same-day patch fixing the CRITICAL localStorage-shape mismatch surfaced by post-ship review: v0.4.0 described the state shape three different ways across `brief.md:184` (per-task sub-keys), `brief.md:208-214` (JSON blob), and `process-brief.md:41` (nested key path). UIs would have hit silent state-not-found errors.
+
+### Fix
+
+- **Canonical shape locked: single JSON blob at key `brief-YYYY-MM-DD`** containing `{schema_version: "0.4.1", tasks_checked: {<task_id>: bool}, annotations: {<item_id>: str}, outreach_tier_collapsed: {...}, last_interaction_at: iso8601}`. No per-task sub-keys; no nested namespaces.
+- **`brief.md` Section 4 corrected** — checkbox state path is now described as "the single JSON-blob localStorage entry described below" (was the per-task sub-key form).
+- **`brief.md` Interactive state contract section rewritten** with the canonical shape + the exact JS incantation for reading: `JSON.parse(localStorage.getItem("brief-YYYY-MM-DD") || "{}")`.
+- **`process-brief.md` Step 1 rewritten** with the v0.4.1 canonical shape (was the v0.4.0 nested-key description).
+- **`schema_version: "0.4.1"` field added** so future readers can gate compatibility. Missing → treat as v0.4.0 (pre-canonical-lock).
+
+### Stale-reference cleanup
+
+- **`brief.md` Section 4 outreach queue:** replaced `weekly-outreach` plugin reference with `relationships` v0.2.0+ (reads from `<config-root>/relationships/today.json`); kept `weekly-outreach` fallback path for migration grace.
+
+### Coordinated with cortex v4.12.2
+
+- Cortex `/end-day` Step 4.0 (NEW in v4.12.2) reads `state.tasks_checked` and `state.annotations` via `mcp__cowork__read_widget_context` using the v0.4.1 canonical shape. Sanitizes annotations (paraphrases, doesn't quote verbatim) before writing to reflection.
+
+### Coordinated with nucleus contracts.md
+
+- contracts.md row for `mcp__cowork__update_artifact(id: "todays-brief")` updated with the canonical localStorage shape + data-flow trace ("annotation content may transit through browser localStorage → cortex /end-day Step 4.0 → reflection → committed memory; /end-day sanitizes").
+
+### Not in this release
+
+- Drag-to-reorder, bulk-action toolbar — still v0.5 candidates.
+- `process-brief.md` Step 3.6 (mark-complete in CRM) unchanged — already canonical.
+
+---
+
 ## [0.4.0] — Interactive brief + canonical 6-section format (2026-05-28)
 
 Closes the brief-interactivity observation logged 2026-05-21 in workstream/nucleus-improvements: "the brief is read-only today; it should be a working surface — check off items, annotate inline, de-prioritize, and have state feed `/end-day`."

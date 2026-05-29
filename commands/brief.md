@@ -181,7 +181,7 @@ The artifact MUST include these sections in this order. Sections with zero conte
 3. **Meetings card** — per-meeting context blocks. **Read-only** as of v0.3.0 (no annotation textareas; use cortex `/recall <person>` for prep). Hide if zero meetings.
 
 4. **Priority tasks card — INTERACTIVE (v0.4.0)** — P0 tasks only. Each row:
-   - **Interactive checkbox** keyed by task ID. State persists in localStorage (`brief-YYYY-MM-DD.tasks.<task_id>`).
+   - **Interactive checkbox** keyed by task ID. State persists in the single JSON-blob localStorage entry described below (path: `brief-YYYY-MM-DD` → field `tasks_checked.<task_id>`).
    - Task title, due date, related contact/deal, priority badge.
    - Per-task annotation textarea (existing behavior).
    - Progress bar in sticky header reflects checked-off ratio in real time.
@@ -200,22 +200,34 @@ The artifact MUST include these sections in this order. Sections with zero conte
 
 6. **Yesterday's reflection (read-only)** — content from yesterday's `## Reflection` (written by cortex `/end-day` Step 4). Always visible (renders "No reflection logged yesterday" placeholder if missing).
 
-### Interactive state contract (v0.4.0+)
+### Interactive state contract (v0.4.0+; canonical shape locked in v0.4.1)
 
-The artifact maintains state in browser `localStorage` keyed by the brief's date:
+**ONE JSON blob per day, stored in `localStorage` under a single date-rotating key.** All readers and writers use the same shape. No per-task sub-keys, no nested namespaces — just the one blob:
 
 ```javascript
+// Key: "brief-YYYY-MM-DD" (rotates with the date; yesterday's key is left in place for audit but no longer read)
 localStorage.setItem("brief-YYYY-MM-DD", JSON.stringify({
-  tasks_checked: { "task-12345": true, "task-67890": false, ... },
-  annotations: { "inbox-thread-id": "draft reply: ...", "task-12345": "moved to tomorrow", ... },
+  schema_version: "0.4.1",
+  tasks_checked: { "task-12345": true, "task-67890": false },   // task id → bool
+  annotations: { "inbox-<thread_id>": "draft reply: ...", "task-12345": "moved to tomorrow" },   // item id → free-form
   outreach_tier_collapsed: { today: false, next_week: false, early_next_month: true, backlog: true },
   last_interaction_at: "2026-05-28T14:32:00-04:00"
 }));
 ```
 
+**Reader pattern (use this exact incantation):**
+
+```javascript
+const state = JSON.parse(localStorage.getItem(`brief-${today_local}`) || "{}");
+const tasksChecked = state.tasks_checked || {};
+const annotations = state.annotations || {};
+```
+
 **State persists across the day.** Re-running `/brief` mid-day preserves checkbox state and annotations (see Step 3a below). The day's checked-off-task ratio drives the progress bar in the sticky header.
 
-**State is read by `/end-day`**: cortex `/end-day` Step 4 (Reflective prompts) can read `localStorage.getItem("brief-<today_local>")` via `mcp__cowork__read_widget_context` to know what got done. This closes the loop — the brief is a living surface, not a one-shot snapshot.
+**State is read by `/end-day`**: cortex `/end-day` Step 4.0 (per `cortex v4.12.2+` spec) reads `state.tasks_checked` and `state.annotations` via `mcp__cowork__read_widget_context(artifact_id="todays-brief")` and uses them to pre-fill the reflection prompts. This closes the loop — the brief is a living surface, not a one-shot snapshot.
+
+**v0.4.1 fix from v0.4.0 review:** earlier versions of this spec described the localStorage shape in three different ways across `brief.md` and `process-brief.md` — `brief-YYYY-MM-DD.tasks.<task_id>` (per-task keys), `brief-YYYY-MM-DD` JSON blob with `tasks_checked` dict, and `brief-YYYY-MM-DD.tasks_checked` (nested key). The canonical shape is the JSON-blob form above. Any earlier reader that expected per-task sub-keys must be updated to read the JSON blob.
 
 Decide create vs. update:
 

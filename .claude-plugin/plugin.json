@@ -1,6 +1,6 @@
 {
   "name": "daily-brief",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Daily flow plugin — owns /brief (today's interactive working surface as a Cowork artifact), /process-brief (routes annotations + checked-off tasks to drafts, CRM completions, and outreach drafts), and /plan-tomorrow (calendar-first planning of the next business day). v0.4.0: brief becomes interactive — P0 tasks have checkboxes driving a progress bar in the sticky header, bizdev outreach queue is tiered (today / next week / early next month / backlog), state persists in localStorage keyed brief-YYYY-MM-DD, and cortex /end-day reads the checked dictionary so the brief is a living surface, not a snapshot. Canonical 6-section format established. Configurable via /setup-brief and /setup-plan.",
   "author": {
     "name": "BrightWay AI"

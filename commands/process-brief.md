@@ -30,16 +30,36 @@ Read `<config-root>/briefs/<today_local>.md`.
 
 ---
 
-## Step 1 — Read the artifact's current state (v0.4.0+ interactive)
+## Step 1 — Read the artifact's current state (v0.4.1 — canonical localStorage shape)
 
-Locate the Cowork artifact by id `todays-brief` (canonical id as of v0.4.0; previously titled "Today's Brief"). Call `mcp__cowork__read_widget_context` to get the current state — both annotation textareas AND the new interactive state.
+Locate the Cowork artifact by id `todays-brief` (canonical id as of v0.4.0). Call `mcp__cowork__read_widget_context(artifact_id="todays-brief")` to get the current state.
 
 In Claude Code (no Cowork artifact tools available): stop with a clear message — "`/process-brief` requires Cowork artifact tools. In Claude Code, edit `<config-root>/briefs/<today_local>.md` directly and call the relevant draft / update commands manually." This is a known v1 limitation.
 
-The artifact's widget context returns:
-1. **Annotations dictionary** keyed by item ID (`meeting-<event_id>`, `inbox-<thread_id>`, `task-<task_id>`, `outreach-<contact_id>`). Empty annotations are filtered out.
-2. **Tasks checked dictionary** (v0.4.0+) keyed by `task-<task_id>` → boolean. From localStorage `brief-YYYY-MM-DD.tasks_checked`. Indicates which P0 tasks the user has marked complete during the day.
-3. **Outreach tier collapsed states** (v0.4.0+) — render-only state, ignored by /process-brief.
+### Reading the JSON-blob localStorage state (canonical v0.4.1 shape)
+
+The artifact's widget context returns the single localStorage entry at key `brief-<today_local>`. Parse it as a JSON blob with this exact shape (per `daily-brief/commands/brief.md` Interactive state contract):
+
+```javascript
+const state = JSON.parse(widget_context["brief-<today_local>"] || "{}");
+
+const annotations = state.annotations || {};        // {item_id: free-form-text}
+const tasksChecked = state.tasks_checked || {};     // {task_id: bool}
+const outreachCollapsed = state.outreach_tier_collapsed || {};  // ignored; render-only
+const schemaVersion = state.schema_version || "0.4.0";  // missing = pre-v0.4.1; treat as 0.4.0
+```
+
+If `schema_version` is newer than `0.4.1`, surface a warning ("brief artifact is newer than this /process-brief version expects — update daily-brief plugin") but proceed by reading what fields you recognize.
+
+### Streams that feed Step 2 classification
+
+- **`annotations`** — free-form user input per item. Routed by Step 2 patterns (draft_reply / reschedule_task / dismiss / draft_outreach / clarify).
+- **`tasks_checked`** — separate signal, NOT an annotation. Routes per new Step 3.6 (HubSpot status: COMPLETED, batched confirmation).
+
+Behavior matrix:
+- A task checked-off WITHOUT an annotation = "I completed this; no further action needed." Step 3.6 only.
+- A task checked-off WITH an annotation = both signals fire independently; annotation routes per Step 2, checkbox routes per Step 3.6.
+- A task UNchecked WITH an annotation = annotation routes; checkbox state means "not done yet."
 
 Both streams feed Step 2 classification. **Checked-off tasks are NOT annotations** — they're a separate signal. Their handling differs:
 - A task checked-off WITHOUT an annotation = "I completed this; no further action needed."
