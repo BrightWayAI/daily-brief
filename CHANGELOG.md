@@ -4,6 +4,36 @@ All notable changes to daily-brief are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions match `plugin.json`.
 
+## [0.4.2] — Artifact race serialization + stale-refs cleanup (2026-05-28)
+
+Followup to v0.4.1 completing the deferred items from the v0.4.0/0.4.1 review punch list. Coordinated with cortex v4.12.3 + relationships v0.2.3.
+
+### Added — Artifact race serialization via target_date metadata
+
+`/brief` Step 3 and cortex `/end-day` Step 5 both write to artifact id `todays-brief`. v0.4.0 had no race protection — last-write-wins could produce confusing state ("artifact shows tomorrow's content labeled with today's date").
+
+v0.4.2 adds `target_date` field on artifact metadata:
+- `/brief` writes `target_date: today_local`.
+- cortex `/end-day` Step 5 pre-stage writes `target_date: tomorrow_local`.
+- Before any update, both readers check existing metadata.target_date. If conflict (existing != intended), surface to user with proceed/abort prompt rather than silent overwrite.
+- Same-date overwrites preserve annotation + tasks_checked state per existing Step 3a logic.
+- Metadata also carries `schema_version: "0.4.2"` so future readers can detect.
+
+### Changed — Stale-references sweep (continuation from v0.4.1)
+
+Three more files now use current plugin names:
+- `commands/setup-brief.md` — Section 1 enable-list, Section 2 sort defaults, and intro paragraph all reference `relationships` (v0.2.0+) with legacy weekly-outreach fallback note.
+- `commands/plan-tomorrow.md` — Step 0 companion plugins extract list, Step 2E outreach plan check rewritten to prefer `relationships` first.
+- `commands/process-brief.md` — description, Step 2 classification table, Step 3 draft_outreach routing, and Step 3.6 association handling all route to `relationships` `/draft-touchpoint` and `/touchpoint` instead of legacy weekly-outreach.
+
+### Acceptance
+
+- [ ] Artifact metadata.target_date check before overwrite.
+- [ ] No live-plugin references to weekly-outreach / bizdev-outreach in setup-brief, plan-tomorrow, process-brief, brief. Only migration-context references remain.
+- [ ] `plugin.json` bumped to 0.4.2.
+
+---
+
 ## [0.4.1] — Canonical localStorage shape lock + brief.md / process-brief.md alignment (2026-05-28)
 
 Same-day patch fixing the CRITICAL localStorage-shape mismatch surfaced by post-ship review: v0.4.0 described the state shape three different ways across `brief.md:184` (per-task sub-keys), `brief.md:208-214` (JSON blob), and `process-brief.md:41` (nested key path). UIs would have hit silent state-not-found errors.

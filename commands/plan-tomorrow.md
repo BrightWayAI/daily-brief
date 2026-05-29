@@ -19,7 +19,7 @@ Extract:
 - CRM (tool name, owner ID)
 - Working hours (start, end, time zone)
 - Calendar conventions (color for task blocks, emoji map, max blocks per day)
-- Companion plugins (cortex installed? core-ops for pipeline-analyst? weekly-outreach?)
+- Companion plugins (cortex installed? core-ops for pipeline-analyst? relationships for daily brief? legacy weekly-outreach?)
 
 ---
 
@@ -72,10 +72,12 @@ Search Gmail (or whatever email connector is available) for:
 - Threads where you were last sender with no reply (3+ business days)
 - Implied action items in recent threads
 
-### 2E — Check for weekly outreach plan (if applicable)
-**If `weekly-outreach` is installed:** check whether it produced a current week's outreach queue. If so, pull the remaining contacts (not yet sent) and any HOLDING PATTERN entries. These feed Step 3's outreach block.
+### 2E — Check for outreach plan (if applicable)
+**If `relationships` (v0.2.0+) is installed:** read `<config-root>/relationships/today.json` for today's surfaced outreach actions. Pull those that haven't been marked done in `events.jsonl`. These feed Step 3's outreach block.
 
-**If not installed:** skip this. Outreach blocks become "if there are clearly good outreach signals from CRM, batch them; otherwise skip."
+**If only legacy `weekly-outreach` is installed (retired plugin):** check whether it produced a current week's outreach queue. If so, pull the remaining contacts (not yet sent) and any HOLDING PATTERN entries.
+
+**If neither installed:** skip this. Outreach blocks become "if there are clearly good outreach signals from CRM, batch them; otherwise skip."
 
 ---
 

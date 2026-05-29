@@ -6,7 +6,7 @@ description: Configure the daily-brief plugin — section order, what to show wh
 
 Short interview that configures the seven sections of your daily brief artifact: which to show, how to sort them, what the annotation hints say, what to do when a section's source is empty.
 
-This plugin assumes identity, voice, and core-ops / weekly-outreach / lead-engine setups are already done (or skipped). It doesn't re-ask those questions.
+This plugin assumes identity, voice, and core-ops / relationships / lead-engine setups are already done (or skipped). It doesn't re-ask those questions.
 
 ---
 
@@ -64,7 +64,7 @@ Read out the seven sections in order. Ask which to enable. Default is all seven 
 1. Today's meetings (calendar + cortex context per attendee)
 2. Inbox action items (Gmail / inbox-triage if installed)
 3. Today's priority tasks (CRM, due today / overdue, owner = you)
-4. Outreach queue (weekly-outreach, if installed)
+4. Outreach queue (relationships v0.2.0+ if installed; legacy weekly-outreach fallback)
 5. Drafted replies awaiting approval (filled by `/process-brief`)
 6. Yesterday's reflection (read-only display from `briefs/<yesterday>.md`)
 7. End-of-day prompts (filled by `/end-day` chain, three text inputs)
@@ -78,7 +78,7 @@ Within each section, ask the sort preference:
 - Meetings: `start_time_asc` (default) | `start_time_desc`
 - Tasks: `priority_then_due` (default) | `due_then_priority` | `created_desc`
 - Inbox items: `triage_score_desc` (default) | `received_desc`
-- Outreach queue: comes pre-sorted from weekly-outreach; default `accept_upstream`
+- Outreach queue: comes pre-sorted from relationships' daily brief (or weekly-outreach legacy); default `accept_upstream`
 
 ### Section 3 — Empty-state behavior
 

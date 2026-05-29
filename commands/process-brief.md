@@ -1,5 +1,5 @@
 ---
-description: Act on the annotations the user wrote into today's brief artifact. Reads the artifact via Cowork's read_widget_context, routes each non-empty annotation to the right downstream skill (draft reply → bizdev-outreach, move task → CRM, etc.), and updates the brief's "Drafted replies awaiting approval" section with what was queued. Never sends anything; drafts only.
+description: Act on the annotations + checked-off tasks the user wrote into today's brief artifact. Reads the artifact via Cowork's read_widget_context (canonical v0.4.1 JSON-blob shape), routes each non-empty annotation to the right downstream skill (draft reply → relationships /draft-touchpoint, move task → CRM, etc.), marks checked-off tasks COMPLETED in CRM, and updates the brief's "Drafted replies awaiting approval" section with what was queued. Never sends anything; drafts only.
 ---
 
 # /process-brief
@@ -74,10 +74,10 @@ For each `(item_id, annotation_text)` pair, classify the user's intent. Use a sm
 
 | Pattern in annotation_text | Normalized action | Routing |
 |---|---|---|
-| "draft reply" / "reply: ..." / "draft response ..." | `draft_reply` | bizdev-outreach skill (or lead-engine for sales-context threads) |
+| "draft reply" / "reply: ..." / "draft response ..." | `draft_reply` | relationships `/draft-touchpoint` (or lead-engine for sales-context cold-prospect threads) |
 | "move to tomorrow" / "move to <date>" | `reschedule_task` | HubSpot MCP (CRM task update_date) — only valid for task items |
 | "skip" / "ignore" / "I'll handle this" / "dismiss" | `dismiss` | log only; no downstream action |
-| "draft outreach" / "send DM" (for outreach-group only) | `draft_outreach` | weekly-outreach or lead-engine draft skill |
+| "draft outreach" / "send DM" (for outreach-group only) | `draft_outreach` | relationships `/draft-touchpoint` (preferred) or lead-engine; legacy weekly-outreach fallback only when relationships not installed |
 | Anything else / ambiguous | `clarify` | ask the user a one-line follow-up in chat |
 
 **Note:** `add_talking_point` (formerly for meeting annotations) was removed in daily-brief v0.3.0 — meetings are now read-only context cards in `/brief`. Use cortex `/recall <person>` for prep context instead, or edit the markdown snapshot directly.
@@ -99,7 +99,7 @@ For `clarify` items, batch them: ask the user one combined question listing each
 
 ### draft_outreach (outreach group)
 
-Hand off to the relevant outreach plugin's draft skill (weekly-outreach if installed, else lead-engine). Pass the annotation text as the instruction. Outreach drafts are written to Gmail or LinkedIn (per the outreach plugin's logic) as drafts only. Capture the result for section 5.
+Hand off to the relevant outreach plugin's draft skill — preferred: relationships `/draft-touchpoint` (v0.2.0+); fallback: lead-engine or legacy weekly-outreach if `relationships` isn't installed. Pass the annotation text as the instruction. Outreach drafts are written to Gmail or LinkedIn (per the outreach plugin's logic) as drafts only. Capture the result for section 5.
 
 ### reschedule_task (task item)
 
@@ -142,7 +142,7 @@ For every task in the checked dictionary where `checked == true`:
 6. On N → no CRM writes; localStorage state still persists (the user knows they did it; CRM just stays out-of-sync until next sync).
 7. On E → per-row toggle, then batch.
 
-If `weekly-outreach` is installed and any checked-off task is associated with an outreach contact, also append to the outreach state: "(completed via brief checkbox 2026-05-28)" so the weekly queue reflects it.
+If `relationships` is installed (v0.2.0+) and any checked-off task is associated with a person in cortex memory/person/, invoke `/touchpoint <person> --channel=task-completion --summary="completed via brief checkbox"` to log it on the person page Recent Interactions AND append to events.jsonl. (Legacy fallback: if only `weekly-outreach` is installed, append to its outreach state similarly.)
 
 This is the new "interactive brief feeds /end-day" path: `/end-day` Step 4 reads the same checked dictionary and knows what got done without re-asking. The brief becomes a living working surface, not a morning snapshot.
 
