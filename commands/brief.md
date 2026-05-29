@@ -229,12 +229,18 @@ const annotations = state.annotations || {};
 
 **v0.4.1 fix from v0.4.0 review:** earlier versions of this spec described the localStorage shape in three different ways across `brief.md` and `process-brief.md` — `brief-YYYY-MM-DD.tasks.<task_id>` (per-task keys), `brief-YYYY-MM-DD` JSON blob with `tasks_checked` dict, and `brief-YYYY-MM-DD.tasks_checked` (nested key). The canonical shape is the JSON-blob form above. Any earlier reader that expected per-task sub-keys must be updated to read the JSON blob.
 
-Decide create vs. update:
+Decide create vs. update (v0.4.2+ race-aware):
 
-1. Call `mcp__cowork__list_artifacts` (or the equivalent listing tool the runtime exposes) and look for an existing artifact titled exactly "Today's Brief".
-2. If found and its stored date metadata equals `<today_local>` → call `mcp__cowork__update_artifact` with the new HTML, **preserving any non-empty annotation textarea values** that match by section + item ID (best-effort — see Step 3a below).
-3. If found but its date is older → call `mcp__cowork__update_artifact` with fresh content. The old day's annotations are not preserved (they belong to a different day); their final state is already in yesterday's markdown snapshot.
-4. If not found → call `mcp__cowork__create_artifact` with title "Today's Brief", `artifact_type: "html"`, content = the rendered template, and metadata `{date: <today_local>, plugin: "daily-brief"}`.
+1. Call `mcp__cowork__list_artifacts` and look for the artifact by id `todays-brief` (canonical id; v0.4.0+).
+2. If found, **check its metadata `target_date` field** (v0.4.2+):
+   - If `target_date == <intended-date>` (where intended-date is `today_local` for `/brief`, or `tomorrow_local` for cortex `/end-day` Step 5 pre-stage) → safe to update. Call `mcp__cowork__update_artifact(artifact_id="todays-brief", content=<new HTML>, metadata={target_date: <intended-date>, plugin: "daily-brief", schema_version: "0.4.2"})`. **Preserve any non-empty annotation textarea values + tasks_checked state** that match by item ID (best-effort — see Step 3a).
+   - If `target_date != intended-date` (e.g., `/brief` runs at 4:55pm while `/end-day` Step 5 is mid-pre-stage of tomorrow's brief), **DO NOT silently overwrite**. Surface to the user:
+     > "⚠ Artifact `todays-brief` already exists with `metadata.target_date: <existing>`. About to overwrite with `target_date: <new>`. This indicates a race between `/brief` (today) and `/end-day` Step 5 (tomorrow), or two concurrent `/brief` invocations. Proceed (last-write-wins, may stomp pre-staged tomorrow content), or abort?"
+     On `proceed`: update as normal. On `abort`: exit Step 3 without modifying the artifact.
+3. If found but its `target_date` is older than `<today_local>` (e.g., yesterday's brief that never got pre-staged) → call `mcp__cowork__update_artifact` with fresh content. The old day's annotations belong to a different day; their final state is already in yesterday's markdown snapshot.
+4. If not found → call `mcp__cowork__create_artifact(id="todays-brief", artifact_type="html", content=<rendered>, metadata={target_date: <intended-date>, plugin: "daily-brief", schema_version: "0.4.2"})`.
+
+**Artifact race serialization (v0.4.2+):** the `target_date` field on metadata is the canonical race-arbiter. Both `/brief` and cortex `/end-day` Step 5 check before overwriting. If they conflict, surface to the user — never silently overwrite. This closes the race surfaced in the second-pass review where "artifact shows tomorrow's content labeled with today's date" could happen.
 
 ### Step 3a — Preserve annotations across same-day re-runs
 
