@@ -4,6 +4,49 @@ All notable changes to daily-brief are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions match `plugin.json`.
 
+## [0.5.0] — End-Day Routine Improvement Spec: 5-section brief, richer actions, surfacing-prefs filter (2026-06-08)
+
+Implements Part A of the End-Day Routine Improvement Spec. Coordinated with cortex v4.13.0.
+
+### Changed — canonical brief is now 5 fixed sections (was 6)
+
+`references/brief-artifact-template.html` rebuilt from Zach's hand-built reference prototype. Fixed section order, identical formatting whether produced by `/brief` or cortex `/end-day` pre-stage:
+
+1. **Center of Gravity** — accent banner, the single most important thing (from yesterday's "one thing that has to move" + top P0). Not interactive.
+2. **Calendar Block** — visual timeline strip (8a–6p, blocks positioned by time, color-coded meeting/focus/personal/open) + written block list with per-meeting notes (context / why this matters / last touch from the linked person/client node).
+3. **Priority Tasks** — P0/P1 only. Richer per-row actions replace the bare checkbox: ✓ Done · 👉 Delegate (→ who) · ⏭ Skip (→ how long) · 🚫 Not important · 📝 Annotate. Progress bar driven by `done`.
+4. **Outreach Queue** — tiered (today / this week / backlog), per-contact actions (Sent / Nudge / Booked / Skip / Let go) + an **optional** category quick-tag (bucket + value-add chips; signal auto-fills from the pipeline entry).
+5. **Yesterday's Reflection** — read-only, from yesterday's `## Reflection`.
+
+The old "inbox action items" and "drafts awaiting approval" sections are gone from the canonical surface; the brief is the working surface — mining/drafting happen in `/process-brief` + `/end-day`.
+
+### Added — research link per outreach contact
+
+Each outreach row now shows a research link next to the name — a "🔗 LinkedIn" link when a profile URL is known (from the contact's cortex person/bizdev node or the pipeline entry), else a "🔍 Research" link built as a LinkedIn people-search (or web search) from name + company. Always non-empty so every contact is one click from prep. New template tokens `{{OUTREACH_LINK}}` / `{{OUTREACH_LINK_LABEL}}`; the markdown twin includes a `[research](url)` link too.
+
+### Added — surfacing-prefs filter (suppression learning)
+
+`/brief` now reads `<config-root>/memory/surfacing-prefs.md` (Step 0D) and **filters priority tasks + outreach against the Do-not-resurface list and noise rules before render**. Suppressed items never appear; noise-class items never reach P0/P1. Closes the "brief resurfaces items I've ignored for weeks" complaint.
+
+### Changed — localStorage contract → schema_version 0.5.0 (breaking)
+
+One JSON blob per day at `brief-YYYY-MM-DD`:
+- `tasks: {id: {action: done|delegate|skip|not_important, detail, ts, name}}` (was `tasks_checked: {id: bool}`)
+- `annotations: {item_id: free-text}`
+- `outreach_actions: {id: {name, action: sent|skip|nudge|let_go|booked|dead, bucket, signal, value_add, detail, ts}}`
+- `last_interaction_at`
+
+Back-compat: readers map a legacy `tasks_checked` `true` → `{action:"done"}`. `/process-brief` and cortex `/end-day` updated to read the new shape.
+
+### Changed — `/process-brief` handles the new action types
+
+Reads the v0.5.0 blob; routes task actions (done→CRM COMPLETED, delegate→delegatee task, skip→defer, not_important→log for `/end-day` suppression) and outreach actions (sent/nudge→touch, booked→prep task, let_go/dead→log). Intra-day actor; durable memory write-backs + suppression learning are owned by cortex `/end-day` Step 2c.
+
+### Notes
+
+- Markdown twin at `<config-root>/briefs/YYYY-MM-DD.md` mirrors the 5 sections and footers the filtered-item count.
+- `/brief` reads `briefs/<date>.seed.json` (written by `/end-day` Steps 4.5/4.6) to seed tomorrow's priorities/outreach.
+
 ## [0.4.2] — Artifact race serialization + stale-refs cleanup (2026-05-28)
 
 Followup to v0.4.1 completing the deferred items from the v0.4.0/0.4.1 review punch list. Coordinated with cortex v4.12.3 + relationships v0.2.3.

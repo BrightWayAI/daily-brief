@@ -1,282 +1,417 @@
 <!--
-  brief-artifact-template.html — daily-brief plugin
+  brief-artifact-template.html — daily-brief plugin (v0.5.0 — End-Day Routine Improvement Spec)
 
-  Rendered by the /brief skill into a Cowork artifact titled "Today's Brief".
-  The skill replaces tokens of the form {{TOKEN}} and the repeating-block
-  comments below with real data. Each annotation <textarea> gets a unique
-  data-item-id and name so Cowork's read_widget_context can return the
-  annotation values keyed by item ID.
+  Rendered by the /brief skill (and pre-staged by cortex /end-day Step 5) into the
+  persistent Cowork artifact with stable id `todays-brief`.
 
-  Template tokens:
-    {{TODAY_LOCAL}}                 e.g., 2026-05-12
+  This template implements the canonical 5-section brief from the End-Day Routine
+  Improvement Spec (Part A). Section order is FIXED:
+
+    1. Center of Gravity   — accent banner, the single most important thing. Not interactive.
+    2. Calendar Block      — visual timeline strip + written block list with notes.
+    3. Priority Tasks      — P0/P1 only, richer per-row actions (done/delegate/skip/not_important/annotate).
+    4. Outreach Queue      — per-contact actions + optional category tagging (bucket/value-add; signal auto-fills).
+    5. Yesterday's Reflection — read-only, from yesterday's `## Reflection`.
+
+  Every interactive action writes to ONE localStorage blob keyed `brief-YYYY-MM-DD`
+  (canonical shape — schema_version 0.5.0; see brief.md "localStorage contract"):
+
+    {
+      "schema_version": "0.5.0",
+      "tasks":            { "<task-id>":    { "action": "done|delegate|skip|not_important", "detail": "", "ts": "", "name": "" } },
+      "annotations":      { "<item-id>":    "free text" },
+      "outreach_actions": { "<contact-id>": { "name":"", "action":"sent|skip|nudge|let_go|booked|dead", "bucket":"", "signal":"", "value_add":"", "detail":"", "ts":"" } },
+      // NOTE: the UI emits sent|nudge|booked|skip|let_go. `dead` is a reader-accepted synonym for
+      // `let_go` (spec marks Dead optional); /end-day + /process-brief treat let_go and dead identically.
+      "last_interaction_at": "ISO8601"
+    }
+
+  cortex /end-day reads this blob via mcp__cowork__read_widget_context(artifact_id="todays-brief")
+  and mines it (Step 2c) + pre-fills reflection (Step 4.0).
+
+  Template tokens the skill substitutes:
+    {{TODAY_LOCAL}}                 e.g., 2026-06-09
+    {{TODAY_HUMAN}}                 e.g., Tuesday, June 9
     {{GENERATED_AT}}                ISO timestamp
-    {{TIMEZONE_LABEL}}              e.g., "America/New_York"
-    {{HINT_INBOX}}
-    {{HINT_TASK}}
-    {{HINT_OUTREACH}}
-    (HINT_MEETING removed in v0.3.0 — meetings are read-only context cards)
-    {{YESTERDAY_REFLECTION_HTML}}   pre-rendered <ul>...</ul> or "No reflection logged"
-    {{PROCESS_PROMPT}}              text sent on Process click; default "Process the annotations in Today's Brief"
+    {{LS_KEY}}                      e.g., brief-2026-06-09
+    {{HEADER_BADGE}}                one-line day descriptor (e.g., "Light calendar · ship the B&S plan")
+    {{COUNTS_LINE}}                 e.g., "2 meetings · 3 tasks · 4 outreach"
+    {{COG_TEXT}}                    Center-of-gravity sentence(s)
+    {{TIMELINE_BLOCKS}}             pre-rendered .tl-block divs (positioned by time), or empty
+    {{HINT_TASK}}                   placeholder for task annotation textareas
+    {{YESTERDAY_REFLECTION_HTML}}   pre-rendered reflection rows, or "No reflection logged yesterday"
+    {{REFLECTION_DATE_LABEL}}       e.g., "Mon 6/8"
 
-  Repeating-block markers (replace the whole comment-block with N rendered cards):
-    <!-- BEGIN MEETINGS --> ... <!-- END MEETINGS -->
-    <!-- BEGIN INBOX --> ... <!-- END INBOX -->
+  Per-outreach-row tokens:
+    {{OUTREACH_LINK}}               research URL for this contact (LinkedIn profile from their
+                                    cortex node, else a LinkedIn people-search URL built from
+                                    name+company, else a web-search URL). Never empty.
+    {{OUTREACH_LINK_LABEL}}         "🔗 LinkedIn" when a real profile URL is known, else "🔍 Research".
+
+  Repeating-block markers (replace the whole comment-block with N rendered rows):
+    <!-- BEGIN CALENDAR --> ... <!-- END CALENDAR -->
     <!-- BEGIN TASKS --> ... <!-- END TASKS -->
     <!-- BEGIN OUTREACH --> ... <!-- END OUTREACH -->
 
-  Section-level toggles: if a section is disabled in user-context, omit the
-  entire <section> element. If a section is enabled but empty AND empty_state
-  for that section is "hide", omit the section. Otherwise render the section
-  card with a single "Nothing today" placeholder line.
+  Section-level toggles: hide a whole <div class="card"> when its content is empty
+  UNLESS the section is required (Center of Gravity, Yesterday's Reflection always render).
 -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Today's Brief — {{TODAY_LOCAL}}</title>
-  <style>
-    :root {
-      --bg: #fafaf9;
-      --card: #ffffff;
-      --border: #e7e5e4;
-      --muted: #78716c;
-      --text: #1c1917;
-      --accent: #0f766e;
-      --accent-soft: #ccfbf1;
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      margin: 0;
-      padding: 24px;
-      line-height: 1.5;
-    }
-    header {
-      max-width: 880px;
-      margin: 0 auto 24px;
-    }
-    header h1 {
-      margin: 0 0 4px;
-      font-size: 22px;
-      font-weight: 700;
-    }
-    header .meta {
-      color: var(--muted);
-      font-size: 13px;
-    }
-    main {
-      max-width: 880px;
-      margin: 0 auto;
-    }
-    section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 18px 20px;
-      margin-bottom: 16px;
-    }
-    section h2 {
-      margin: 0 0 12px;
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text);
-    }
-    .item {
-      border-top: 1px solid var(--border);
-      padding-top: 12px;
-      margin-top: 12px;
-    }
-    .item:first-of-type {
-      border-top: none;
-      padding-top: 0;
-      margin-top: 0;
-    }
-    .item-title {
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-    .item-meta {
-      color: var(--muted);
-      font-size: 13px;
-      margin-bottom: 6px;
-    }
-    .item-context {
-      font-size: 14px;
-      color: var(--text);
-      margin-bottom: 8px;
-    }
-    textarea.annotation {
-      width: 100%;
-      min-height: 48px;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      font-family: inherit;
-      font-size: 14px;
-      resize: vertical;
-      background: #fdfdfc;
-    }
-    textarea.annotation:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px var(--accent-soft);
-    }
-    .empty {
-      color: var(--muted);
-      font-size: 14px;
-      font-style: italic;
-    }
-    .read-only-card {
-      background: #fafaf9;
-    }
-    .eod-prompt {
-      margin-top: 12px;
-    }
-    .eod-prompt label {
-      display: block;
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 4px;
-    }
-    .button-row {
-      max-width: 880px;
-      margin: 12px auto 32px;
-      text-align: right;
-    }
-    button.process {
-      background: var(--accent);
-      color: #ffffff;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    button.process:hover {
-      background: #0d5e57;
-    }
-    .section-tag {
-      display: inline-block;
-      font-size: 11px;
-      color: var(--muted);
-      background: #f5f5f4;
-      padding: 2px 6px;
-      border-radius: 4px;
-      margin-left: 6px;
-      vertical-align: middle;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TODAY_HUMAN}} — Daily Brief</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f9fa; color: #1a1a2e; font-size: 14px; line-height: 1.5; padding: 20px; }
+
+  /* Sticky header */
+  .header { position: sticky; top: 0; z-index: 10; background: #1a1a2e; color: #fff; border-radius: 10px; padding: 16px 22px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+  .header .title { font-size: 18px; font-weight: 700; color: #fff; }
+  .header .sub { font-size: 12px; color: #9999bb; margin-top: 2px; }
+  .badge { background: #f5c842; color: #1a1a2e; border-radius: 20px; padding: 4px 12px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+  /* 1. Center of gravity */
+  .cog { background: linear-gradient(135deg,#fffbeb,#fef3c7); border-left: 4px solid #f5c842; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+  .cog-label { font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: #b45309; }
+  .cog-text { font-size: 14px; font-weight: 600; color: #1a1a2e; margin-top: 3px; }
+
+  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+
+  .card { background: #fff; border-radius: 10px; border: 1px solid #e8e8f0; overflow: hidden; }
+  .card-header { padding: 11px 16px; font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; border-bottom: 1px solid #e8e8f0; display: flex; align-items: center; gap: 7px; }
+  .card-body { padding: 14px 16px; }
+  .card-header.red    { color: #c0392b; background: #fef5f5; }
+  .card-header.blue   { color: #2563eb; background: #eff6ff; }
+  .card-header.purple { color: #7c3aed; background: #f5f3ff; }
+  .card-header.gray   { color: #4b5563; background: #f9fafb; }
+  .counts { margin-left: auto; font-weight: 600; color: #9ca3af; letter-spacing: 0; text-transform: none; }
+
+  /* 2a. Visual timeline strip */
+  .timeline { position: relative; height: 54px; background: #f9fafb; border: 1px solid #eef0f4; border-radius: 8px; margin-bottom: 14px; }
+  .tl-hour { position: absolute; top: 0; bottom: 18px; border-left: 1px dashed #e5e7eb; font-size: 9px; color: #b6bcc6; padding-left: 3px; }
+  .tl-hour span { position: absolute; bottom: -16px; left: 0; }
+  .tl-block { position: absolute; top: 6px; height: 24px; border-radius: 5px; font-size: 10px; font-weight: 600; color: #fff; padding: 4px 6px; overflow: hidden; white-space: nowrap; cursor: pointer; }
+  .tl-block.meeting  { background: #2563eb; }
+  .tl-block.focus    { background: #7c3aed; }
+  .tl-block.personal { background: #6b7280; }
+  .tl-block.open     { background: #cbd5e1; color: #475569; }
+  .tl-empty { font-size: 12px; color: #9ca3af; font-style: italic; line-height: 54px; text-align: center; }
+
+  /* 2b. Written calendar list */
+  .cal-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f6; align-items: flex-start; }
+  .cal-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .cal-item:first-child { padding-top: 0; }
+  .cal-time { font-size: 12px; font-weight: 700; color: #2563eb; white-space: nowrap; min-width: 80px; padding-top: 1px; }
+  .cal-title { font-weight: 600; font-size: 13px; color: #1a1a2e; }
+  .cal-who { font-size: 12px; color: #6b7280; margin-top: 2px; }
+  .cal-notes { font-size: 12px; color: #374151; margin-top: 5px; background: #f8f9fa; border-left: 3px solid #2563eb; padding: 5px 8px; border-radius: 0 4px 4px 0; }
+
+  /* 3. Priority tasks — richer rows */
+  .item-tag { display: inline-block; background: #fee2e2; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; color: #991b1b; margin-left: 6px; vertical-align: middle; }
+  .item-tag.p1 { background: #fef3c7; color: #92400e; }
+  .task-row { padding: 11px 0; border-bottom: 1px solid #f0f0f6; }
+  .task-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .task-row:first-child { padding-top: 0; }
+  .task-label { font-weight: 600; color: #1a1a2e; font-size: 13px; }
+  .task-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+  .task-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .t-btn { border: 1px solid #e5e7eb; background:#fff; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all .12s; color:#374151; }
+  .t-btn:hover { background:#f9fafb; }
+  .t-btn.done    { color:#065f46; border-color:#a7f3d0; }
+  .t-btn.delegate{ color:#1d4ed8; border-color:#bfdbfe; }
+  .t-btn.skip    { color:#92400e; border-color:#fde68a; }
+  .t-btn.notimp  { color:#991b1b; border-color:#fecaca; }
+  .t-btn.annotate{ color:#4b5563; border-color:#d1d5db; }
+  .t-status { font-size: 11px; font-weight:600; margin-top: 6px; display:none; }
+  .task-label.struck { text-decoration: line-through; color: #9ca3af; }
+  .task-sub.struck { color: #d1d5db; }
+  textarea.annotation { width: 100%; min-height: 42px; margin-top: 8px; padding: 7px 9px; border: 1px solid #e5e7eb; border-radius: 6px; font-family: inherit; font-size: 12px; resize: vertical; background: #fdfdfc; display: none; }
+  textarea.annotation:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+
+  .progress-wrap { margin-top: 12px; }
+  .progress-bar { height: 7px; background: #f0f0f6; border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; background: #10b981; width: 0%; transition: width .25s; }
+  .progress-text { font-size: 11px; color: #6b7280; margin-top: 5px; }
+
+  /* 4. Outreach */
+  .outreach-tier { font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: #9ca3af; margin: 12px 0 4px; }
+  .outreach-tier:first-child { margin-top: 0; }
+  .outreach-row { padding: 10px 0; border-bottom: 1px solid #f0f0f6; }
+  .outreach-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .or-name { font-weight: 600; font-size: 13px; }
+  .or-link { font-weight: 600; font-size: 11px; color: #2563eb; text-decoration: none; margin-left: 6px; vertical-align: middle; }
+  .or-link:hover { text-decoration: underline; }
+  .or-title { font-size: 11px; color: #6b7280; }
+  .or-why { font-size: 12px; color: #374151; margin-top: 3px; }
+  .or-btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; align-items: center; }
+  .or-btn { border: none; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .or-btn:hover { opacity: .82; }
+  .or-btn.b-green  { background: #d1fae5; color: #065f46; }
+  .or-btn.b-amber  { background: #fef3c7; color: #92400e; }
+  .or-btn.b-red    { background: #fee2e2; color: #991b1b; }
+  .or-btn.b-blue   { background: #dbeafe; color: #1e40af; }
+  .or-btn.b-gray   { background: #f3f4f6; color: #374151; }
+  .or-btn.b-done   { background: #d1fae5; color: #065f46; cursor: default; }
+  .or-tags { display: none; gap: 5px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+  .or-tags select { font-size: 11px; padding: 3px 6px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; color: #374151; }
+  .or-tags .tag-label { font-size: 10px; color: #9ca3af; font-weight: 600; }
+
+  .action-log { margin-top: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 7px; padding: 8px 10px; font-size: 11px; color: #6b7280; }
+  .action-log b { color: #374151; }
+  .feedback-note { font-size: 11px; color:#7c3aed; background:#f5f3ff; border:1px solid #e9d5ff; border-radius:7px; padding:7px 10px; margin-top:10px; }
+
+  /* 5. Reflection */
+  .reflect-item { padding: 8px 0; border-bottom: 1px solid #f0f0f6; font-size: 12px; }
+  .reflect-item:last-child { border-bottom: none; }
+  .reflect-q { font-weight: 700; color: #4b5563; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  .reflect-a { color: #374151; margin-top: 2px; }
+  .note { font-size: 11px; color: #9ca3af; margin-top: 10px; }
+</style>
 </head>
 <body>
-  <header>
-    <h1>Today's Brief — {{TODAY_LOCAL}}</h1>
-    <div class="meta">Generated {{GENERATED_AT}} · Time zone: {{TIMEZONE_LABEL}}</div>
-  </header>
 
-  <main>
-    <!-- ============== SECTION 1 — MEETINGS ============== -->
-    <section data-section="meetings">
-      <h2>1. Today's meetings <span class="section-tag">calendar + cortex</span></h2>
+<!-- STICKY HEADER -->
+<div class="header">
+  <div>
+    <div class="title">{{TODAY_HUMAN}}</div>
+    <div class="sub">Daily Brief — generated {{GENERATED_AT}}</div>
+  </div>
+  <div class="badge">{{HEADER_BADGE}}</div>
+</div>
 
-      <!-- BEGIN MEETINGS -->
-      <div class="item read-only-card" data-item-id="meeting-{{MEETING_ID}}">
-        <div class="item-title">{{MEETING_TIME}} — {{MEETING_TITLE}}</div>
-        <div class="item-meta">With: {{MEETING_ATTENDEES}}{{MEETING_LOCATION_SUFFIX}}</div>
-        <div class="item-context">{{MEETING_CONTEXT}}</div>
+<!-- 1. CENTER OF GRAVITY (always render; not interactive) -->
+<div class="cog">
+  <div class="cog-label">Center of gravity</div>
+  <div class="cog-text">{{COG_TEXT}}</div>
+</div>
+
+<div class="grid">
+
+  <!-- 2. CALENDAR BLOCK — visual timeline + written list (hide card if zero events) -->
+  <div class="card" data-section="calendar">
+    <div class="card-header blue">📅 Calendar <span class="counts">{{COUNTS_LINE}}</span></div>
+    <div class="card-body">
+      <!-- Visual timeline strip (8a–6p). Skill replaces {{TIMELINE_BLOCKS}} with positioned
+           .tl-block divs (inline left/width %), or a single .tl-empty placeholder. -->
+      <div class="timeline" id="timeline">
+        {{TIMELINE_BLOCKS}}
       </div>
-      <!-- END MEETINGS -->
-      <!-- Meeting annotations removed in v0.3.0 — meetings are read-only context cards. -->
-      <!-- Use cortex /recall <person> for deeper prep context. -->
 
-      <!-- If zero meetings and empty_state == show_empty, render:
-        <p class="empty">Nothing today.</p>
-      -->
-    </section>
-
-    <!-- ============== SECTION 2 — INBOX ============== -->
-    <section data-section="inbox">
-      <h2>2. Inbox action items <span class="section-tag">gmail + triage</span></h2>
-
-      <!-- BEGIN INBOX -->
-      <div class="item" data-item-id="inbox-{{THREAD_ID}}">
-        <div class="item-title">{{INBOX_SENDER}} — {{INBOX_SUBJECT}}</div>
-        <div class="item-meta">Received {{INBOX_RECEIVED}}</div>
-        <div class="item-context">{{INBOX_SNIPPET}}</div>
-        <div class="item-context"><em>Suggested framing:</em> {{INBOX_SUGGESTED_FRAMING}}</div>
-        <textarea class="annotation"
-                  name="inbox-{{THREAD_ID}}"
-                  data-item-id="inbox-{{THREAD_ID}}"
-                  placeholder="{{HINT_INBOX}}"></textarea>
+      <!-- Written block list -->
+      <!-- BEGIN CALENDAR -->
+      <div class="cal-item">
+        <div class="cal-time">{{CAL_TIME}}</div>
+        <div>
+          <div class="cal-title">{{CAL_TITLE}}</div>
+          <div class="cal-who">{{CAL_WHO}}</div>
+          <div class="cal-notes">{{CAL_NOTES}}</div>
+        </div>
       </div>
-      <!-- END INBOX -->
-    </section>
+      <!-- END CALENDAR -->
+    </div>
+  </div>
 
-    <!-- ============== SECTION 3 — PRIORITY TASKS ============== -->
-    <section data-section="tasks">
-      <h2>3. Today's priority tasks <span class="section-tag">CRM</span></h2>
+  <!-- 3. PRIORITY TASKS — P0/P1 only, richer actions (hide card if zero) -->
+  <div class="card" data-section="tasks">
+    <div class="card-header red">🔴 Priority Tasks</div>
+    <div class="card-body">
 
       <!-- BEGIN TASKS -->
-      <div class="item" data-item-id="task-{{TASK_ID}}">
-        <div class="item-title">{{TASK_TITLE}}</div>
-        <div class="item-meta">Due {{TASK_DUE}} · {{TASK_RELATED}} · Priority {{TASK_PRIORITY}}</div>
-        <textarea class="annotation"
-                  name="task-{{TASK_ID}}"
-                  data-item-id="task-{{TASK_ID}}"
-                  placeholder="{{HINT_TASK}}"></textarea>
+      <div class="task-row" data-id="{{TASK_ID}}" data-name="{{TASK_NAME}}">
+        <div class="task-label">{{TASK_TITLE}} <span class="item-tag{{TASK_PRIORITY_CLASS}}">{{TASK_PRIORITY}}</span></div>
+        <div class="task-sub">{{TASK_SUB}}</div>
+        <div class="task-actions">
+          <button class="t-btn done"     onclick="taskAction(this,'done')">✓ Done</button>
+          <button class="t-btn delegate" onclick="taskAction(this,'delegate')">👉 Delegate</button>
+          <button class="t-btn skip"     onclick="taskAction(this,'skip')">⏭ Skip</button>
+          <button class="t-btn notimp"   onclick="taskAction(this,'not_important')">🚫 Not important</button>
+          <button class="t-btn annotate" onclick="toggleAnnotation(this)">📝 Annotate</button>
+        </div>
+        <textarea class="annotation" data-item-id="{{TASK_ID}}" placeholder="{{HINT_TASK}}"
+                  oninput="saveAnnotation('{{TASK_ID}}', this.value)"></textarea>
+        <div class="t-status"></div>
       </div>
       <!-- END TASKS -->
-    </section>
 
-    <!-- ============== SECTION 4 — OUTREACH QUEUE ============== -->
-    <section data-section="outreach">
-      <h2>4. Outreach queue <span class="section-tag">weekly-outreach</span></h2>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-text" id="progress-text">0 of 0 done</div>
+      </div>
+
+      <div class="action-log" id="task-log"><b>Task action log</b> (mined by /end-day) — <span id="task-log-entries" style="color:#9ca3af;font-style:italic;">no actions yet</span></div>
+      <div class="feedback-note">Every action here — done, delegate, skip, not&nbsp;important, annotate — is recorded and read by <code>/end-day</code>, so Nucleus learns what matters. "Not important" suppresses the item from future briefs.</div>
+    </div>
+  </div>
+
+  <!-- 4. OUTREACH QUEUE — tiered, per-contact actions + optional category tags (hide card if zero) -->
+  <div class="card" data-section="outreach">
+    <div class="card-header purple">📣 Outreach Queue</div>
+    <div class="card-body">
 
       <!-- BEGIN OUTREACH -->
-      <div class="item">
-        <div class="item-title">{{OUTREACH_NAME}} — {{OUTREACH_COMPANY}}</div>
-        <div class="item-meta">Last touch: {{OUTREACH_LAST_TOUCH}} · Status: {{OUTREACH_STATUS}}</div>
+      <!-- Skill emits a `.outreach-tier` label before the first row of each non-empty tier
+           (Today / This week / Backlog), then one `.outreach-row` per contact. -->
+      <div class="outreach-row" data-id="{{OUTREACH_ID}}" data-name="{{OUTREACH_NAME}}" data-signal="{{OUTREACH_SIGNAL}}">
+        <div class="or-name">{{OUTREACH_NAME}} <a class="or-link" href="{{OUTREACH_LINK}}" target="_blank" rel="noopener">{{OUTREACH_LINK_LABEL}}</a></div>
+        <div class="or-title">{{OUTREACH_TITLE}}</div>
+        <div class="or-why">{{OUTREACH_WHY}}</div>
+        <div class="or-btns">
+          <button class="or-btn b-green" data-act="sent"   onclick="logOutreach(this,'sent')">✓ Sent</button>
+          <button class="or-btn b-amber" data-act="nudge"  onclick="logOutreach(this,'nudge')">Nudge</button>
+          <button class="or-btn b-blue"  data-act="booked" onclick="logOutreach(this,'booked')">📅 Booked</button>
+          <button class="or-btn b-gray"  data-act="skip"   onclick="logOutreach(this,'skip')">Skip</button>
+          <button class="or-btn b-red"   data-act="let_go" onclick="logOutreach(this,'let_go')">Let go</button>
+        </div>
+        <!-- Optional quick-tag row — revealed after an action is logged (D.3: optional, skippable). -->
+        <div class="or-tags">
+          <span class="tag-label">Tag (optional):</span>
+          <select class="tag-bucket" onchange="tagOutreach(this,'bucket')">
+            <option value="">bucket…</option>
+            <option value="new business">new business</option>
+            <option value="relationship building">relationship building</option>
+            <option value="network expansion">network expansion</option>
+          </select>
+          <select class="tag-valueadd" onchange="tagOutreach(this,'value_add')">
+            <option value="">value-add…</option>
+            <option value="article/framework">article/framework</option>
+            <option value="intro">intro</option>
+            <option value="diagnostic/free sample">diagnostic/free sample</option>
+            <option value="case study/result">case study/result</option>
+            <option value="domain observation">domain observation</option>
+          </select>
+        </div>
       </div>
       <!-- END OUTREACH -->
 
-      <textarea class="annotation"
-                name="outreach-group"
-                data-item-id="outreach-group"
-                placeholder="{{HINT_OUTREACH}}"></textarea>
-    </section>
-
-    <!-- ============== SECTION 5 — DRAFTS AWAITING APPROVAL ============== -->
-    <section data-section="drafts" class="read-only-card">
-      <h2>5. Drafted replies awaiting approval <span class="section-tag">filled by /process-brief</span></h2>
-      <p class="empty">Drafts will appear here after you run <code>/process-brief</code>.</p>
-      <!-- After /process-brief runs, this section is replaced with a list of:
-        <div class="item">
-          <div class="item-title">✓ {{ACTION_LABEL}}</div>
-          <div class="item-meta">{{ACTION_DETAIL}} · {{ACTION_LINK_HTML}}</div>
-        </div>
-      -->
-    </section>
-
-    <!-- ============== SECTION 6 — YESTERDAY'S REFLECTION ============== -->
-    <section data-section="yesterday-reflection" class="read-only-card">
-      <h2>6. Yesterday's reflection <span class="section-tag">read-only</span></h2>
-      {{YESTERDAY_REFLECTION_HTML}}
-    </section>
-
-    <!-- Section 7 (end-of-day prompts) removed in v0.3.0. -->
-    <!-- Reflection capture now lives in cortex /end-day Step 4. -->
-    <!-- That step appends a ## Reflection section to today's brief markdown, -->
-    <!-- which tomorrow's brief Section 6 reads. -->
-  </main>
-
-  <div class="button-row">
-    <button class="process"
-            type="button"
-            onclick="window.sendPrompt && window.sendPrompt('{{PROCESS_PROMPT}}')">
-      Process all annotations
-    </button>
+      <div class="action-log" id="outreach-log"><b>Outreach log</b> (mined by /end-day) — <span id="outreach-log-entries" style="color:#9ca3af;font-style:italic;">no actions yet</span></div>
+    </div>
   </div>
+
+  <!-- 5. YESTERDAY'S REFLECTION (always render; read-only) -->
+  <div class="card" data-section="reflection">
+    <div class="card-header gray">🪞 Yesterday's Reflection ({{REFLECTION_DATE_LABEL}})</div>
+    <div class="card-body">
+      {{YESTERDAY_REFLECTION_HTML}}
+    </div>
+  </div>
+
+</div>
+
+<p class="note" style="text-align:center;">Today's Brief · stable artifact id <code>todays-brief</code> · run <code>/brief</code> to refresh, <code>/process-brief</code> to act on annotations · actions feed <code>/end-day</code> learning</p>
+
+<script>
+const LS_KEY = '{{LS_KEY}}';
+function load(){ try { return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); } catch(e){ return {}; } }
+function save(s){ s.last_interaction_at = new Date().toISOString(); s.schema_version = '0.5.0'; localStorage.setItem(LS_KEY, JSON.stringify(s)); }
+let state = load();
+if(!state.tasks) state.tasks = {};
+if(!state.annotations) state.annotations = {};
+if(!state.outreach_actions) state.outreach_actions = {};
+
+const ACTION_LABEL = { done:'✓ Done', delegate:'👉 Delegated', skip:'⏭ Skipped', not_important:'🚫 Not important' };
+const ACTION_COLOR = { done:'#065f46', delegate:'#1d4ed8', skip:'#92400e', not_important:'#991b1b' };
+
+/* ---- Priority tasks ---- */
+function updateProgress(){
+  const rows = document.querySelectorAll('.task-row');
+  let done = 0;
+  rows.forEach(r => { const t = state.tasks[r.dataset.id]; if(t && t.action==='done') done++; });
+  const pct = rows.length ? Math.round(done/rows.length*100) : 0;
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-text').textContent = done + ' of ' + rows.length + ' done';
+}
+function applyTaskState(row){
+  const id = row.dataset.id; const t = state.tasks[id];
+  const ta = row.querySelector('textarea.annotation');
+  if(ta && state.annotations[id]){ ta.value = state.annotations[id]; ta.style.display='block'; }
+  if(!t) return;
+  const lbl = row.querySelector('.task-label'); const sub = row.querySelector('.task-sub'); const st = row.querySelector('.t-status');
+  const struck = (t.action==='done' || t.action==='not_important');
+  lbl.classList.toggle('struck', struck); sub.classList.toggle('struck', struck);
+  st.style.display='block'; st.style.color = ACTION_COLOR[t.action] || '#374151';
+  st.textContent = (ACTION_LABEL[t.action]||t.action) + (t.detail ? ' · ' + t.detail : '') + ' · ' + t.ts;
+}
+function taskAction(btn, action){
+  const row = btn.closest('.task-row'); const id = row.dataset.id;
+  let detail = '';
+  if(action==='delegate'){ detail = (prompt('Delegate to whom?','Erica')||'').trim(); if(!detail) return; }
+  else if(action==='skip'){ detail = (prompt('Skip for how long? (e.g. 1d, 3d, next week)','3d')||'').trim(); }
+  else if(action==='not_important'){ if(!confirm('Mark "not important" and stop surfacing this in future briefs?')) return; }
+  const ts = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+  state.tasks[id] = { action, detail, ts, name: row.dataset.name };
+  save(state); applyTaskState(row); renderTaskLog(); updateProgress();
+}
+function toggleAnnotation(btn){
+  const ta = btn.closest('.task-row').querySelector('textarea.annotation');
+  ta.style.display = (ta.style.display==='block') ? 'none' : 'block';
+  if(ta.style.display==='block') ta.focus();
+}
+function saveAnnotation(id, val){
+  if(val && val.trim()) state.annotations[id] = val;
+  else delete state.annotations[id];
+  save(state);
+}
+function renderTaskLog(){
+  const el = document.getElementById('task-log-entries');
+  const entries = Object.entries(state.tasks);
+  if(!entries.length){ el.innerHTML='<span style="color:#9ca3af;font-style:italic;">no actions yet</span>'; return; }
+  el.innerHTML = entries.map(([id,t]) => `<strong>${t.name||id}</strong> → ${t.action}${t.detail?(' ('+t.detail+')'):''} · ${t.ts}`).join(' &nbsp;·&nbsp; ');
+}
+
+/* ---- Outreach ---- */
+function logOutreach(btn, action){
+  const row = btn.closest('.outreach-row'); const id = row.dataset.id;
+  let detail = '';
+  if(action==='nudge' || action==='skip'){ detail = (prompt('Note / snooze (optional, e.g. +3d):','')||'').trim(); }
+  const ts = new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+  const prev = state.outreach_actions[id] || {};
+  state.outreach_actions[id] = {
+    name: row.dataset.name, action, detail, ts,
+    signal: row.dataset.signal || '',
+    bucket: prev.bucket || '', value_add: prev.value_add || ''
+  };
+  save(state);
+  const wrap = row.querySelector('.or-btns');
+  wrap.querySelectorAll('button').forEach(b=>{ b.disabled=true; b.classList.add('b-gray'); b.style.opacity='.4'; });
+  btn.classList.add('b-done'); btn.disabled=false; btn.style.opacity='1'; btn.textContent='✓ '+action+' · '+ts;
+  // Reveal the optional quick-tag row (skippable).
+  const tags = row.querySelector('.or-tags'); if(tags) tags.style.display='flex';
+  renderOutreachLog();
+}
+function tagOutreach(sel, field){
+  const row = sel.closest('.outreach-row'); const id = row.dataset.id;
+  if(!state.outreach_actions[id]) state.outreach_actions[id] = { name: row.dataset.name, action:'', detail:'', ts:'', signal: row.dataset.signal||'', bucket:'', value_add:'' };
+  state.outreach_actions[id][field] = sel.value;
+  save(state); renderOutreachLog();
+}
+function renderOutreachLog(){
+  const el = document.getElementById('outreach-log-entries');
+  const entries = Object.entries(state.outreach_actions).filter(([,d])=>d.action);
+  if(!entries.length){ el.innerHTML='<span style="color:#9ca3af;font-style:italic;">no actions yet</span>'; return; }
+  el.innerHTML = entries.map(([id,d]) => {
+    const tags = [d.bucket, d.value_add].filter(Boolean).join('/');
+    return `<strong>${d.name||id}</strong> → ${d.action}${tags?(' ['+tags+']'):''} · ${d.ts}`;
+  }).join(' &nbsp;·&nbsp; ');
+}
+function applyOutreachState(row){
+  const id = row.dataset.id; const d = state.outreach_actions[id]; if(!d) return;
+  if(d.action){
+    row.querySelectorAll('.or-btn').forEach(b=>{ b.disabled=true; b.classList.add('b-gray'); b.style.opacity='.4'; });
+    const m = row.querySelector('.or-btn[data-act="'+d.action+'"]') || row.querySelector('.or-btns button'); if(m){ m.classList.add('b-done'); m.disabled=false; m.style.opacity='1'; m.textContent='✓ '+d.action+' · '+d.ts; }
+    const tags = row.querySelector('.or-tags'); if(tags){ tags.style.display='flex';
+      const tb=tags.querySelector('.tag-bucket'); if(tb&&d.bucket) tb.value=d.bucket;
+      const tv=tags.querySelector('.tag-valueadd'); if(tv&&d.value_add) tv.value=d.value_add;
+    }
+  }
+}
+
+/* ---- Restore on open ---- */
+document.querySelectorAll('.task-row').forEach(applyTaskState);
+document.querySelectorAll('.outreach-row').forEach(applyOutreachState);
+renderTaskLog(); renderOutreachLog(); updateProgress();
+</script>
 </body>
 </html>

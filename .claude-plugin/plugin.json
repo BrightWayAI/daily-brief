@@ -1,7 +1,7 @@
 {
   "name": "daily-brief",
-  "version": "0.4.2",
-  "description": "Daily flow plugin — owns /brief (today's interactive working surface as a Cowork artifact), /process-brief (routes annotations + checked-off tasks to drafts, CRM completions, and outreach drafts), and /plan-tomorrow (calendar-first planning of the next business day). v0.4.0: brief becomes interactive — P0 tasks have checkboxes driving a progress bar in the sticky header, bizdev outreach queue is tiered (today / next week / early next month / backlog), state persists in localStorage keyed brief-YYYY-MM-DD, and cortex /end-day reads the checked dictionary so the brief is a living surface, not a snapshot. Canonical 6-section format established. Configurable via /setup-brief and /setup-plan.",
+  "version": "0.5.0",
+  "description": "Daily flow plugin — owns /brief (today's interactive working surface as a Cowork artifact), /process-brief (routes annotations + task/outreach actions to drafts, CRM, and person/bizdev nodes), and /plan-tomorrow (calendar-first planning of the next business day). v0.5.0 (End-Day Routine Improvement Spec): 5 fixed sections — Center of Gravity, Calendar Block (visual timeline + written list with notes), Priority Tasks (richer per-row actions: done/delegate/skip/not_important/annotate), Outreach Queue (per-contact actions + optional bucket/value-add/signal tags), Yesterday's Reflection. Everything is filtered against memory/surfacing-prefs.md before render (suppression + repeat-ignore learning). One localStorage blob brief-YYYY-MM-DD (schema_version 0.5.0: tasks/annotations/outreach_actions) mined by cortex /end-day Step 2c. Configurable via /setup-brief and /setup-plan.",
   "author": {
     "name": "BrightWay AI"
   },

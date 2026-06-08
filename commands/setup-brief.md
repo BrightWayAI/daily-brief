@@ -4,7 +4,7 @@ description: Configure the daily-brief plugin — section order, what to show wh
 
 # /setup-brief
 
-Short interview that configures the seven sections of your daily brief artifact: which to show, how to sort them, what the annotation hints say, what to do when a section's source is empty.
+Short interview that configures your daily brief: sort defaults, empty-state behavior, the task annotation hint, and the default source set for `/end-day`'s review-and-cost card. (The 5-section layout itself is fixed as of v0.5.0.)
 
 This plugin assumes identity, voice, and core-ops / relationships / lead-engine setups are already done (or skipped). It doesn't re-ask those questions.
 
@@ -57,49 +57,44 @@ Read `<config-root>/plugins/daily-brief.user-context.md` if it exists.
 
 Ask one section at a time. Confirm before moving on. Don't bombard.
 
-### Section 1 — Section enable / disable
+### Section 1 — Section model (v0.5.0)
 
-Read out the seven sections in order. Ask which to enable. Default is all seven on; the user can turn any off.
+The canonical brief is **5 fixed sections in a fixed order** (End-Day Routine Improvement Spec Part A). The order is not user-configurable; only the empty-content sections hide automatically:
 
-1. Today's meetings (calendar + cortex context per attendee)
-2. Inbox action items (Gmail / inbox-triage if installed)
-3. Today's priority tasks (CRM, due today / overdue, owner = you)
-4. Outreach queue (relationships v0.2.0+ if installed; legacy weekly-outreach fallback)
-5. Drafted replies awaiting approval (filled by `/process-brief`)
-6. Yesterday's reflection (read-only display from `briefs/<yesterday>.md`)
-7. End-of-day prompts (filled by `/end-day` chain, three text inputs)
+1. **Center of Gravity** — the single most important thing today (always; not interactive)
+2. **Calendar Block** — visual timeline strip + written list with per-meeting notes (hide if zero meetings)
+3. **Priority Tasks** — P0/P1 only, richer actions (done/delegate/skip/not_important/annotate) (hide if zero)
+4. **Outreach Queue** — tiered (today / this week / backlog), per-contact actions + optional tags (hide if empty)
+5. **Yesterday's Reflection** — read-only (always)
 
-Capture: `sections_enabled: [1,2,3,4,5,6,7]` (or a subset).
+There's nothing to enable/disable; confirm the user understands the fixed model and move on. (No `sections_enabled` list in v0.5.0.)
 
 ### Section 2 — Sort defaults
 
-Within each section, ask the sort preference:
-
 - Meetings: `start_time_asc` (default) | `start_time_desc`
-- Tasks: `priority_then_due` (default) | `due_then_priority` | `created_desc`
-- Inbox items: `triage_score_desc` (default) | `received_desc`
-- Outreach queue: comes pre-sorted from relationships' daily brief (or weekly-outreach legacy); default `accept_upstream`
+- Tasks: `priority_then_due` (default) | `due_then_priority`
+- Outreach queue: comes pre-sorted from the relationships/lead-engine pipeline; default `accept_upstream`
 
 ### Section 3 — Empty-state behavior
 
-For each enabled section, ask what should happen if its source returns zero items:
+For the auto-hiding cards (calendar / tasks / outreach), ask what should happen when the source returns zero items:
 
-- `hide` — collapse the card entirely
-- `show_empty` (default) — render the card with a short "Nothing today" placeholder line
+- `hide` (default) — collapse the card entirely (cleaner surface)
+- `show_empty` — render the card with a short "Nothing today" placeholder line
 
-This matters most for the outreach queue and yesterday's reflection (which won't exist on day 1).
+Center of Gravity and Yesterday's Reflection always render.
 
-### Section 4 — Annotation placeholders
+### Section 4 — Annotation placeholder + source-review defaults
 
-Each annotation textarea shows placeholder hint text. Defaults:
+The only annotation textarea is on priority tasks (revealed by 📝 Annotate). Default hint:
 
-- Meeting items: "e.g., add talking point: X / move 15 min later / cancel"
-- Inbox items: "e.g., draft reply: short ack + my view / move to tomorrow / skip"
-- Task items: "e.g., move to tomorrow / mark done / reassign to [name]"
-- Outreach group: "e.g., skip Marcus this week / draft all / pick 3"
-- End-of-day prompts: free-text, no hint
+- Task items: "e.g., draft reply / move to tomorrow / context note"
 
-Ask: "Want to customize any of the placeholder hint text, or accept defaults?"
+Also ask which sources should be **default-checked** in cortex `/end-day`'s Step 0.7 review-and-cost card (Today's Brief is always required & first):
+
+- `end_day.sources:` default `[transcripts, email, crm]`; offer to add `slack`.
+
+Ask: "Want to customize the placeholder hint or the default source set, or accept defaults?"
 
 ### Section 5 — Brief auto-run
 
@@ -131,7 +126,7 @@ Also create `<config-root>/briefs/` if it doesn't exist (where the markdown snap
 
 Summarize what was captured (which sections enabled, sorts, auto-run choice). Then offer:
 
-> "Daily brief configured. Run `/brief` now to generate today's first one — it'll create a Cowork artifact titled 'Today's Brief' that you'll see in the artifacts list. Open it, annotate any sections, then run `/process-brief` to act on the annotations."
+> "Daily brief configured. Run `/brief` now to generate today's first one — it'll create the 'Today's Brief' artifact (stable id `todays-brief`). Act on tasks/outreach inline (those feed `/end-day`), annotate anything you want drafted, then run `/process-brief`."
 
 ---
 

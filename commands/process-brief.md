@@ -1,5 +1,5 @@
 ---
-description: Act on the annotations + checked-off tasks the user wrote into today's brief artifact. Reads the artifact via Cowork's read_widget_context (canonical v0.4.1 JSON-blob shape), routes each non-empty annotation to the right downstream skill (draft reply → relationships /draft-touchpoint, move task → CRM, etc.), marks checked-off tasks COMPLETED in CRM, and updates the brief's "Drafted replies awaiting approval" section with what was queued. Never sends anything; drafts only.
+description: Act on the actions + annotations the user wrote into today's brief artifact. Reads the artifact via Cowork's read_widget_context (canonical v0.5.0 JSON-blob shape — tasks/annotations/outreach_actions), routes each annotation to the right downstream skill (draft reply → relationships /draft-touchpoint, move task → CRM), and stages task actions (done→COMPLETED, delegate→delegatee task, skip→defer) and outreach actions (sent/nudge/booked/let_go) to CRM and person/bizdev nodes. Intra-day actor; durable memory write-backs + suppression learning happen in /end-day Step 2c. Never sends anything; drafts only.
 ---
 
 # /process-brief
@@ -30,41 +30,39 @@ Read `<config-root>/briefs/<today_local>.md`.
 
 ---
 
-## Step 1 — Read the artifact's current state (v0.4.1 — canonical localStorage shape)
+## Step 1 — Read the artifact's current state (v0.5.0 — canonical localStorage shape)
 
-Locate the Cowork artifact by id `todays-brief` (canonical id as of v0.4.0). Call `mcp__cowork__read_widget_context(artifact_id="todays-brief")` to get the current state.
+Locate the Cowork artifact by id `todays-brief`. Call `mcp__cowork__read_widget_context(artifact_id="todays-brief")` to get the current state.
 
 In Claude Code (no Cowork artifact tools available): stop with a clear message — "`/process-brief` requires Cowork artifact tools. In Claude Code, edit `<config-root>/briefs/<today_local>.md` directly and call the relevant draft / update commands manually." This is a known v1 limitation.
 
-### Reading the JSON-blob localStorage state (canonical v0.4.1 shape)
+### Reading the JSON-blob localStorage state (canonical v0.5.0 shape)
 
-The artifact's widget context returns the single localStorage entry at key `brief-<today_local>`. Parse it as a JSON blob with this exact shape (per `daily-brief/commands/brief.md` Interactive state contract):
+The widget context returns the single localStorage entry at key `brief-<today_local>`. Parse it (per `daily-brief/commands/brief.md` localStorage contract):
 
 ```javascript
 const state = JSON.parse(widget_context["brief-<today_local>"] || "{}");
 
-const annotations = state.annotations || {};        // {item_id: free-form-text}
-const tasksChecked = state.tasks_checked || {};     // {task_id: bool}
-const outreachCollapsed = state.outreach_tier_collapsed || {};  // ignored; render-only
-const schemaVersion = state.schema_version || "0.4.0";  // missing = pre-v0.4.1; treat as 0.4.0
+const tasks       = state.tasks || {};            // {task_id: {action: done|delegate|skip|not_important, detail, ts, name}}
+const annotations = state.annotations || {};      // {item_id: free-form-text}
+const outreach    = state.outreach_actions || {}; // {contact_id: {name, action: sent|skip|nudge|let_go|booked|dead, bucket, signal, value_add, detail, ts}}
+const schemaVersion = state.schema_version || "0.4.0";
 ```
 
-If `schema_version` is newer than `0.4.1`, surface a warning ("brief artifact is newer than this /process-brief version expects — update daily-brief plugin") but proceed by reading what fields you recognize.
+**Back-compat:** if you see `state.tasks_checked` (a `{id: bool}` map from v0.4.x) but no `state.tasks`, treat each `true` as `{action: "done"}`. If `schema_version` is newer than `0.5.0`, surface a one-line warning and proceed with the fields you recognize.
 
-### Streams that feed Step 2 classification
+### Three streams feed Step 2/3
 
 - **`annotations`** — free-form user input per item. Routed by Step 2 patterns (draft_reply / reschedule_task / dismiss / draft_outreach / clarify).
-- **`tasks_checked`** — separate signal, NOT an annotation. Routes per new Step 3.6 (HubSpot status: COMPLETED, batched confirmation).
+- **`tasks`** — per-task action objects, NOT annotations. Routed per Step 3.6 (done → CRM COMPLETED; delegate → CRM task for delegatee; skip → defer due date; not_important → log for `/end-day` suppression).
+- **`outreach_actions`** — per-contact action objects with categories. Routed per Step 3.7 (sent/nudge → draft touchpoint; booked → prep task; let_go/dead → log).
 
-Behavior matrix:
-- A task checked-off WITHOUT an annotation = "I completed this; no further action needed." Step 3.6 only.
-- A task checked-off WITH an annotation = both signals fire independently; annotation routes per Step 2, checkbox routes per Step 3.6.
-- A task UNchecked WITH an annotation = annotation routes; checkbox state means "not done yet."
+Behavior matrix (task action + annotation are independent signals on the same row):
+- Task `done` without annotation → Step 3.6 only.
+- Task `done` with annotation → both fire: annotation routes per Step 2, action routes per Step 3.6.
+- No task action but annotation present → annotation routes; the task isn't acted on.
 
-Both streams feed Step 2 classification. **Checked-off tasks are NOT annotations** — they're a separate signal. Their handling differs:
-- A task checked-off WITHOUT an annotation = "I completed this; no further action needed."
-- A task checked-off WITH an annotation = both signals fire; annotation routes per Step 2 classification, checkbox routes per Step 3.6 (new — see below).
-- A task UNchecked WITH an annotation = annotation routes; checkbox state means "not done yet."
+**Division of labor with `/end-day`:** `/process-brief` is the intra-day actor — it stages reversible side-effects on demand (Gmail drafts, CRM date/status updates, touchpoint drafts) so you can process mid-day. The **memory write-backs and suppression learning** (writing `not_important` items into `surfacing-prefs.md`, logging touches onto person/bizdev nodes, incrementing skip counters) happen in `/end-day` Step 2c, which reads the same blob. `/process-brief` is idempotent and safe to run repeatedly; `/end-day` mines the final end-of-day state.
 
 ---
 
@@ -95,11 +93,11 @@ For `clarify` items, batch them: ask the user one combined question listing each
 1. Read the original thread via Gmail MCP using the `thread_id` from the item ID.
 2. Call the writing-style plugin's draft skill if installed (or inline draft using `<config-root>/voice.md`). Build a reply that captures the user's intent from `annotation_text`.
 3. Save as a Gmail draft via `mcp__f77d3a90-04d4-4394-96b5-a5d4402dfe0a__create_draft` (or whichever Gmail tool the runtime exposes).
-4. Capture the draft URL / Gmail draft ID for the brief's section 5.
+4. Capture the draft URL / Gmail draft ID for the run summary + markdown twin.
 
 ### draft_outreach (outreach group)
 
-Hand off to the relevant outreach plugin's draft skill — preferred: relationships `/draft-touchpoint` (v0.2.0+); fallback: lead-engine or legacy weekly-outreach if `relationships` isn't installed. Pass the annotation text as the instruction. Outreach drafts are written to Gmail or LinkedIn (per the outreach plugin's logic) as drafts only. Capture the result for section 5.
+Hand off to the relevant outreach plugin's draft skill — preferred: relationships `/draft-touchpoint` (v0.2.0+); fallback: lead-engine or legacy weekly-outreach if `relationships` isn't installed. Pass the annotation text as the instruction. Outreach drafts are written to Gmail or LinkedIn (per the outreach plugin's logic) as drafts only. Capture the result for the run summary + markdown twin.
 
 ### reschedule_task (task item)
 
@@ -123,28 +121,46 @@ Already handled in Step 2 — by the time you reach Step 3, the user has answere
 
 ---
 
-## Step 3.6 — Mark checked-off tasks complete in CRM (v0.4.0+)
+## Step 3.6 — Route task actions to CRM (v0.5.0)
 
-For every task in the checked dictionary where `checked == true`:
+Walk `state.tasks`. Route by `action`:
 
-1. Verify the task still exists in CRM (`hubspot:get_crm_object` for the task ID).
-2. Look up the task's current status. If already `COMPLETED` → no-op (idempotent).
-3. Otherwise, queue a status update: `status: COMPLETED` + `completion_date: today_local`.
-4. Batch updates: collect all check-completion intents from this run, present as a confirmation table:
-   ```
-   The following P0 tasks were checked off in today's brief:
-     · "Send proposal to Vector" (task-12345) → mark COMPLETED?
-     · "Reply to Sarah on intro request" (task-67890) → mark COMPLETED?
+**`done`** — verify the task still exists in CRM (read it back via the HubSpot MCP); if already `COMPLETED`, no-op (idempotent); else queue `status: COMPLETED` + `completion_date: today_local` via `manage_crm_objects` (or `update_records_for_table` for non-HubSpot CRMs).
 
-   [Y]es to all · [N]o to all · [E]dit (toggle per row)
-   ```
-5. On Y → batch HubSpot update. Report successes/failures.
-6. On N → no CRM writes; localStorage state still persists (the user knows they did it; CRM just stays out-of-sync until next sync).
-7. On E → per-row toggle, then batch.
+**`delegate`** (`detail` = delegatee, default Erica) — queue: reassign the source task's owner to the delegatee if the CRM supports it, OR create a new CRM task for the delegatee mirroring the original, due `today_local`. Note the delegation in the run summary.
 
-If `relationships` is installed (v0.2.0+) and any checked-off task is associated with a person in cortex memory/person/, invoke `/touchpoint <person> --channel=task-completion --summary="completed via brief checkbox"` to log it on the person page Recent Interactions AND append to events.jsonl. (Legacy fallback: if only `weekly-outreach` is installed, append to its outreach state similarly.)
+**`skip`** (`detail` = snooze duration, e.g. `3d`) — queue a due-date push on the source task by the parsed duration (same path as `reschedule_task`). This is the intra-day version; `/end-day` separately increments the per-task skip counter for the repeat-ignore rule.
 
-This is the new "interactive brief feeds /end-day" path: `/end-day` Step 4 reads the same checked dictionary and knows what got done without re-asking. The brief becomes a living working surface, not a morning snapshot.
+**`not_important`** — do NOT write to CRM here. Log it for `/end-day` to fold into `surfacing-prefs.md`: append a line to `<config-root>/plugins/daily-brief.dismissed-log.md` as `<today> <ISO-time> task-<id> not_important: <title>`. (The authoritative suppression write happens in `/end-day` Step 2c.)
+
+Batch all CRM intents and present one confirmation table before writing:
+
+```
+From today's brief task actions:
+  · "Deliver B&S plan" (task-123) → mark COMPLETED
+  · "CBM admin" (task-456) → delegate to Erica (create her task)
+  · "Globant reply" (task-789) → skip 3d (push due date)
+
+[Y]es to all · [N]o to all · [E]dit (toggle per row)
+```
+
+On Y → batch CRM writes; report successes/failures. On N → no CRM writes (localStorage state persists; `/end-day` will still mine it). On E → per-row toggle, then batch.
+
+If `relationships` is installed and a `done`/`delegate` task is associated with a person in `memory/person/`, invoke `/touchpoint <person> --channel=task --summary="<action> via brief"` to log it. (Legacy fallback: `weekly-outreach` outreach state.)
+
+## Step 3.7 — Route outreach actions (v0.5.0)
+
+Walk `state.outreach_actions`. Each entry carries `action` + optional `bucket` / `value_add` / `signal`.
+
+- **`sent`** — log a touch on the contact's person/bizdev node (or hand to relationships `/draft-touchpoint` if a draft is still needed). Record `bucket` + `value_add` + `signal` on the touch so outreach analytics can roll them up.
+- **`nudge`** — log a follow-up touch (with `detail` snooze if present).
+- **`booked`** — advance the pipeline stage and create a CRM prep task.
+- **`let_go` / `dead`** — log and remove the contact from the active queue.
+- **`skip`** — defer reappearance by `detail` duration; no node write.
+
+Batch these into the same confirmation flow as Step 3.6 (or a second table) so nothing writes without a single approval. The authoritative node write-backs are owned by `/end-day` Step 2c; in `/process-brief` these are the intra-day stages — keep them idempotent (don't double-log the same touch).
+
+This is the "interactive brief feeds /end-day" path: `/end-day` Step 2c reads the same `tasks` + `outreach_actions` dictionaries and does the durable memory write-backs + suppression learning without re-asking. The brief is a living working surface, not a morning snapshot.
 
 ---
 
@@ -156,34 +172,19 @@ For each successful action, append a `### Processed annotations` section at the 
 - [<ISO-time>] <item_id> → <action>: <one-line result>
 ```
 
-This is the audit trail. The same content goes into section 5 of the artifact in Step 5.
+This is the audit trail. It's appended under `### Processed annotations` at the bottom of the markdown twin.
+
+> Note (v0.5.0): the 5-section brief has no "Drafted replies awaiting approval" card. The action results live in the markdown twin (above) and in the artifact's existing task/outreach action logs (which already reflect the user's clicks). `/process-brief` does NOT add a new artifact section; it reports results in chat (Step 5).
 
 ---
 
-## Step 5 — Update the artifact's section 5
-
-Call `mcp__cowork__update_artifact` on "Today's Brief" with an updated section 5 card. The card lists every action just taken:
-
-```
-Drafted replies and updates from this run:
-
-✓ Drafted reply to "RE: Q3 plan" (Sarah Chen) — view in Gmail
-✓ Rescheduled "Send Acme proposal" → 2026-05-13
-✓ Added talking point to 10:00 — Tom Reyes: "ask about onboarding pricing"
-✓ Dismissed: "Newsletter digest"
-```
-
-Each line includes a link where possible (Gmail draft URL, CRM record URL). Preserve any annotations already in other sections of the artifact (re-use Step 3a from `/brief` to read-then-re-render).
-
----
-
-## Step 6 — Notify the user
+## Step 5 — Notify the user
 
 Output one summary message to chat:
 
-> "Processed <N> annotations. <M> drafts in Gmail, <K> tasks updated, <L> meeting talking points added, <D> dismissed. Section 5 of the brief now shows details. Review drafts before sending."
+> "Processed <N> annotations + <A> task actions + <O> outreach actions. <M> Gmail drafts, <K> CRM updates (completions/delegations/reschedules), <T> touchpoints logged, <D> dismissed. Review drafts before sending. End-of-day write-backs + suppression learning will run in `/end-day`."
 
-Don't dump the action details into chat — they're in the artifact and in the markdown snapshot.
+Don't dump the action details into chat — they're in the markdown twin and the artifact's action logs.
 
 ---
 
@@ -194,5 +195,5 @@ Don't dump the action details into chat — they're in the artifact and in the m
 - Reschedule >14 days out asks for confirmation inline before writing to CRM.
 - Ambiguous annotations are batched into one clarification question, not one-per-item.
 - Cost: classifier is Haiku-class. Synthesis (draft writes) is Sonnet, gated to items that need it.
-- Telemetry: optionally log one line to core-ops `/log-agent-run` per run (skill: process-brief, action_counts: {draft_reply, reschedule_task, add_talking_point, dismiss}, runtime_ms).
+- Telemetry: optionally log one line to core-ops `/log-agent-run` per run (skill: process-brief, action_counts: {draft_reply, reschedule_task, dismiss, task_done, task_delegate, task_skip, task_not_important, outreach_sent, outreach_nudge, outreach_booked, outreach_let_go}, runtime_ms).
 - Privacy: annotation text and draft bodies are processed in-context and stored in Gmail / CRM / markdown snapshot. They're not exfiltrated anywhere else.

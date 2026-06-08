@@ -8,37 +8,32 @@ _Last updated: [filled by setup]_
 - **brief_enabled:** [true / false — master switch; if false, `/brief` exits cleanly]
 - **auto_open_artifact:** [true / false — when /brief runs, also open the artifact tab; default false]
 
-## Sections enabled
-List section numbers (1-7) the user wants rendered. Default: all seven.
-- [1] Today's meetings
-- [2] Inbox action items
-- [3] Today's priority tasks
-- [4] Outreach queue
-- [5] Drafted replies awaiting approval
-- [6] Yesterday's reflection
-- [7] End-of-day prompts
+## Sections (v0.5.0 — fixed order, 5 sections)
+The canonical brief renders 5 fixed sections in this order (End-Day Routine Improvement Spec Part A). Center of Gravity and Yesterday's Reflection always render; the other three hide when empty.
+- [1] Center of Gravity (always; not interactive)
+- [2] Calendar Block (visual timeline + written list with notes; hide if zero meetings)
+- [3] Priority Tasks (P0/P1 only; richer actions; hide if zero)
+- [4] Outreach Queue (tiered; per-contact actions + optional tags; hide if empty)
+- [5] Yesterday's Reflection (always; read-only)
 
 ## Sort defaults
 - **meetings:** [start_time_asc / start_time_desc — default start_time_asc]
-- **tasks:** [priority_then_due / due_then_priority / created_desc — default priority_then_due]
-- **inbox:** [triage_score_desc / received_desc — default triage_score_desc]
-- **outreach:** [accept_upstream — default; pre-sorted by weekly-outreach]
+- **tasks:** [priority_then_due / due_then_priority — default priority_then_due]
+- **outreach:** [accept_upstream — default; pre-sorted by the relationships/lead-engine pipeline]
 
 ## Empty-state behavior
-For each enabled section, what to do when its source returns zero items:
-- **meetings:** [show_empty / hide — default show_empty]
-- **inbox:** [show_empty / hide — default show_empty]
-- **tasks:** [show_empty / hide — default show_empty]
-- **outreach:** [show_empty / hide — default hide (often empty on non-outreach days)]
-- **yesterday_reflection:** [show_empty / hide — default show_empty]
+- **calendar:** [show_empty / hide — default hide]
+- **tasks:** [show_empty / hide — default hide]
+- **outreach:** [show_empty / hide — default hide]
+- (Center of Gravity + Yesterday's Reflection always render their placeholder.)
 
 ## Annotation placeholder hints
-Text shown inside empty textareas as ghost-text instruction.
-- **meeting_items:** "e.g., add talking point: X / move 15 min later / cancel"
-- **inbox_items:** "e.g., draft reply: short ack + my view / move to tomorrow / skip"
-- **task_items:** "e.g., move to tomorrow / mark done / reassign to [name]"
-- **outreach_group:** "e.g., skip Marcus this week / draft all / pick 3"
-- **eod_prompts:** (no hint — free text)
+Ghost-text shown in a task's annotation textarea (revealed by the 📝 Annotate action).
+- **task_items:** "e.g., draft reply / move to tomorrow / context note"
+
+## Source review & cost gate (cortex /end-day Step 0.7)
+Default-checked sources for the end-of-day review card. (Today's Brief is always required & first.)
+- **end_day.sources:** [transcripts, email, crm — default; add `slack` to include it by default]
 
 ## Auto-run schedule
 - **enabled:** [true / false — default false]
@@ -48,6 +43,5 @@ Text shown inside empty textareas as ghost-text instruction.
 ## Per-section caps
 Maximum items rendered per section (everything beyond falls into a "+N more" tail).
 - **meetings:** [12 default]
-- **inbox:** [7 default]
 - **tasks:** [12 default]
 - **outreach:** [10 default]
