@@ -1,282 +1,346 @@
+<!DOCTYPE html><script type="application/json" id="cowork-artifact-meta">
+{
+  "name": "Todays Brief",
+  "schemaVersion": 1,
+  "description": "{{META_DESCRIPTION}}",
+  "mcpTools": {{META_MCP_TOOLS}},
+  "mcpServerNames": {{META_MCP_SERVERS}}
+}
+</script>
 <!--
-  brief-artifact-template.html — daily-brief plugin
+  =====================================================================
+  TODAY'S BRIEF — CANONICAL TEMPLATE (daily-brief v0.5.0, spec v2 layout)
+  Reusable, date-agnostic layout for the persistent `todays-brief` Cowork artifact.
+  Reference spec: End-Day Routine Improvement Spec (Part A).
 
-  Rendered by the /brief skill into a Cowork artifact titled "Today's Brief".
-  The skill replaces tokens of the form {{TOKEN}} and the repeating-block
-  comments below with real data. Each annotation <textarea> gets a unique
-  data-item-id and name so Cowork's read_widget_context can return the
-  annotation values keyed by item ID.
+  Section order is FIXED:
+    1 Center of Gravity (accent banner, not interactive)
+    2 Calendar (visual timeline strip + written blocks w/ notes)
+    3 Priority Tasks (done / delegate / skip / not_important / annotate)
+    4 Outreach Queue (sent / nudge / skip / let_go + bucket/signal/value_add tags
+                      + per-contact research link)
+    5 Yesterday's Reflection (biggest thing done · blocked · one thing to move)
 
-  Template tokens:
-    {{TODAY_LOCAL}}                 e.g., 2026-05-12
-    {{GENERATED_AT}}                ISO timestamp
-    {{TIMEZONE_LABEL}}              e.g., "America/New_York"
-    {{HINT_INBOX}}
-    {{HINT_TASK}}
-    {{HINT_OUTREACH}}
-    (HINT_MEETING removed in v0.3.0 — meetings are read-only context cards)
-    {{YESTERDAY_REFLECTION_HTML}}   pre-rendered <ul>...</ul> or "No reflection logged"
-    {{PROCESS_PROMPT}}              text sent on Process click; default "Process the annotations in Today's Brief"
+  HOW THE SKILL RENDERS THIS (per /brief or /end-day pre-stage):
+   - Replace every {{PLACEHOLDER}}.
+   - Set LS_KEY via {{DATE_ISO}} → brief-YYYY-MM-DD (must rotate with the date).
+   - Repeat the .cal-item / .task-row / .outreach-row blocks per item (data-id unique).
+   - Feed the timeline via {{TL_BLOCKS_JSON}} — array of {s,e,label,cls} in DECIMAL hours,
+     cls ∈ meeting|focus|personal. Set {{TL_START_HOUR}}/{{TL_END_HOUR}} (default 8/18).
+   - Outreach category auto-fill: emit the matching <option> FIRST in each select so it's
+     pre-selected (signal pulled from the pipeline entry; bucket/value-add are optional).
+   - cowork-artifact-meta: {{META_DESCRIPTION}} one-liner; {{META_MCP_TOOLS}} and
+     {{META_MCP_SERVERS}} are JSON arrays of the runtime's connected calendar/email/CRM
+     MCP tool ids + server names (emit "[]" / "[]" if none, or drop the whole <script>
+     block in Claude Code where Cowork artifact meta is irrelevant).
 
-  Repeating-block markers (replace the whole comment-block with N rendered cards):
-    <!-- BEGIN MEETINGS --> ... <!-- END MEETINGS -->
-    <!-- BEGIN INBOX --> ... <!-- END INBOX -->
-    <!-- BEGIN TASKS --> ... <!-- END TASKS -->
-    <!-- BEGIN OUTREACH --> ... <!-- END OUTREACH -->
+  localStorage contract (canonical schema_version 0.5.0 — read by /process-brief and
+  /end-day Step 2c via mcp__cowork__read_widget_context(artifact_id="todays-brief")):
+    {
+      "schema_version": "0.5.0",
+      "tasks":            { "<task-id>":    { "action":"done|delegate|skip|not_important", "detail":"", "ts":"", "name":"" } },
+      "annotations":      { "<item-id>":    "free text" },
+      "outreach_actions": { "<contact-id>": { "name":"", "action":"sent|nudge|skip|let_go|booked|dead", "bucket":"", "signal":"", "value_add":"", "detail":"", "ts":"" } },
+      "tasks_checked":    { "<task-id>": true },   // back-compat mirror of done actions (v0.4.x readers)
+      "last_interaction_at": "ISO8601"
+    }
+  The UI emits outreach actions sent|nudge|skip|let_go. `booked`/`dead` are reader-accepted
+  synonyms (/end-day + /process-brief treat dead = let_go) but not rendered by default.
+  Outreach `detail` is reader-OPTIONAL: the v2 UI has no outreach detail prompt, so it's
+  unpopulated here. Readers that defer on `skip` use a default (e.g. 3d) when detail is absent.
 
-  Section-level toggles: if a section is disabled in user-context, omit the
-  entire <section> element. If a section is enabled but empty AND empty_state
-  for that section is "hide", omit the section. Otherwise render the section
-  card with a single "Nothing today" placeholder line.
+  Keep the artifact id STABLE as `todays-brief` on every update_artifact call. The skill
+  owns the target_date + schema_version metadata + race guard (see brief.md Step 3).
+  =====================================================================
 -->
-<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Today's Brief — {{TODAY_LOCAL}}</title>
-  <style>
-    :root {
-      --bg: #fafaf9;
-      --card: #ffffff;
-      --border: #e7e5e4;
-      --muted: #78716c;
-      --text: #1c1917;
-      --accent: #0f766e;
-      --accent-soft: #ccfbf1;
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      margin: 0;
-      padding: 24px;
-      line-height: 1.5;
-    }
-    header {
-      max-width: 880px;
-      margin: 0 auto 24px;
-    }
-    header h1 {
-      margin: 0 0 4px;
-      font-size: 22px;
-      font-weight: 700;
-    }
-    header .meta {
-      color: var(--muted);
-      font-size: 13px;
-    }
-    main {
-      max-width: 880px;
-      margin: 0 auto;
-    }
-    section {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 18px 20px;
-      margin-bottom: 16px;
-    }
-    section h2 {
-      margin: 0 0 12px;
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text);
-    }
-    .item {
-      border-top: 1px solid var(--border);
-      padding-top: 12px;
-      margin-top: 12px;
-    }
-    .item:first-of-type {
-      border-top: none;
-      padding-top: 0;
-      margin-top: 0;
-    }
-    .item-title {
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-    .item-meta {
-      color: var(--muted);
-      font-size: 13px;
-      margin-bottom: 6px;
-    }
-    .item-context {
-      font-size: 14px;
-      color: var(--text);
-      margin-bottom: 8px;
-    }
-    textarea.annotation {
-      width: 100%;
-      min-height: 48px;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      font-family: inherit;
-      font-size: 14px;
-      resize: vertical;
-      background: #fdfdfc;
-    }
-    textarea.annotation:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px var(--accent-soft);
-    }
-    .empty {
-      color: var(--muted);
-      font-size: 14px;
-      font-style: italic;
-    }
-    .read-only-card {
-      background: #fafaf9;
-    }
-    .eod-prompt {
-      margin-top: 12px;
-    }
-    .eod-prompt label {
-      display: block;
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 4px;
-    }
-    .button-row {
-      max-width: 880px;
-      margin: 12px auto 32px;
-      text-align: right;
-    }
-    button.process {
-      background: var(--accent);
-      color: #ffffff;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    button.process:hover {
-      background: #0d5e57;
-    }
-    .section-tag {
-      display: inline-block;
-      font-size: 11px;
-      color: var(--muted);
-      background: #f5f5f4;
-      padding: 2px 6px;
-      border-radius: 4px;
-      margin-left: 6px;
-      vertical-align: middle;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{DATE_LONG}} — Daily Brief</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f8f9fa; color: #1a1a2e; font-size: 14px; line-height: 1.5; padding: 20px; }
+  .header { background: #1a1a2e; color: #fff; border-radius: 10px; padding: 18px 22px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+  .header .sub { font-size: 12px; color: #9999bb; margin-top: 2px; }
+  .badge { background: #f5c842; color: #1a1a2e; border-radius: 20px; padding: 4px 12px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+  .cog { background: linear-gradient(135deg,#fffbeb,#fef3c7); border-left: 4px solid #f5c842; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; }
+  .cog-label { font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: #b45309; }
+  .cog-text { font-size: 14px; font-weight: 600; color: #1a1a2e; margin-top: 3px; }
+
+  .card { background: #fff; border-radius: 10px; border: 1px solid #e8e8f0; overflow: hidden; margin-bottom: 14px; }
+  .card-header { padding: 11px 16px; font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; border-bottom: 1px solid #e8e8f0; display: flex; align-items: center; gap: 7px; }
+  .card-body { padding: 14px 16px; }
+  .card-header.red    { color: #c0392b; background: #fef5f5; }
+  .card-header.blue   { color: #2563eb; background: #eff6ff; }
+  .card-header.purple { color: #7c3aed; background: #f5f3ff; }
+  .card-header.gray   { color: #4b5563; background: #f9fafb; }
+
+  .timeline { position: relative; height: 58px; margin: 2px 0 14px; border-radius: 8px; background: #fafafe; border: 1px solid #eef0f5; }
+  .tl-hours { position:absolute; inset:0; }
+  .tl-hour { position:absolute; top:0; bottom:0; border-left:1px dashed #eceef4; }
+  .tl-hour span { position:absolute; bottom:2px; left:3px; font-size:9px; color:#b9bfca; }
+  .tl-block { position:absolute; top:8px; height:26px; border-radius:6px; font-size:10px; font-weight:700; color:#fff; padding:5px 7px; white-space:nowrap; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  .tl-block.meeting { background:#2563eb; } .tl-block.focus { background:#7c8598; } .tl-block.personal { background:#0ea5a4; }
+  .tl-legend { font-size:10px; color:#9ca3af; margin-top:-6px; }
+  .tl-legend .dot { display:inline-block;width:8px;height:8px;border-radius:2px;margin:0 3px 0 8px;vertical-align:middle; }
+
+  .cal-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f0f0f6; align-items: flex-start; }
+  .cal-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .cal-item:first-child { padding-top: 0; }
+  .cal-time { font-size: 12px; font-weight: 700; color: #2563eb; white-space: nowrap; min-width: 82px; padding-top: 1px; }
+  .cal-title { font-weight: 600; font-size: 13px; color: #1a1a2e; }
+  .cal-who { font-size: 12px; color: #6b7280; margin-top: 2px; }
+  .cal-notes { font-size: 12px; color: #374151; margin-top: 5px; background: #f8f9fa; border-left: 3px solid #2563eb; padding: 5px 8px; border-radius: 0 4px 4px 0; }
+
+  .item-tag { display: inline-block; background: #fee2e2; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; color: #991b1b; margin-left: 6px; vertical-align: middle; }
+  .item-tag.p1 { background: #fef3c7; color: #92400e; }
+
+  .task-row, .outreach-row { padding: 11px 0; border-bottom: 1px solid #f0f0f6; }
+  .task-row:last-child, .outreach-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .task-row:first-child, .outreach-row:first-child { padding-top: 0; }
+  .row-label { font-weight: 600; color: #1a1a2e; font-size: 13px; }
+  .row-sub { font-size: 12px; color: #6b7280; margin-top: 2px; }
+  .or-link { font-weight: 600; font-size: 11px; color: #2563eb; text-decoration: none; margin-left: 6px; vertical-align: middle; }
+  .or-link:hover { text-decoration: underline; }
+  .actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; align-items:center; }
+  .btn { border: 1px solid #e5e7eb; background:#fff; border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all .12s; color:#374151; }
+  .btn:hover { background:#f9fafb; }
+  .btn.done{color:#065f46;border-color:#a7f3d0;} .btn.delegate{color:#1d4ed8;border-color:#bfdbfe;}
+  .btn.skip{color:#92400e;border-color:#fde68a;} .btn.notimp{color:#991b1b;border-color:#fecaca;}
+  .btn.annotate{color:#4b5563;border-color:#d1d5db;}
+  .btn.sent{color:#065f46;border-color:#a7f3d0;} .btn.nudge{color:#92400e;border-color:#fde68a;}
+  .btn.letgo{color:#991b1b;border-color:#fecaca;} .btn.skipo{color:#4b5563;}
+  .status { font-size: 11px; font-weight:600; margin-top: 6px; display:none; }
+  .row-label.struck { text-decoration: line-through; color: #9ca3af; }
+  .row-sub.struck { color: #d1d5db; }
+  textarea.annotation { width: 100%; min-height: 42px; margin-top: 8px; padding: 7px 9px; border: 1px solid #e5e7eb; border-radius: 6px; font-family: inherit; font-size: 12px; resize: vertical; background: #fdfdfc; display: none; }
+  textarea.annotation:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+  .cat { display:flex; gap:6px; flex-wrap:wrap; margin-top:7px; }
+  .cat select { font-size:11px; border:1px solid #e5e7eb; border-radius:6px; padding:3px 6px; background:#fff; color:#374151; }
+  .cat label { font-size:10px; color:#9ca3af; align-self:center; }
+
+  .progress-wrap { margin-top: 12px; }
+  .progress-bar { height: 7px; background: #f0f0f6; border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; background: #10b981; width: 0%; transition: width .25s; }
+  .progress-text { font-size: 11px; color: #6b7280; margin-top: 5px; }
+
+  .log { margin-top: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 7px; padding: 8px 10px; font-size: 11px; color: #6b7280; }
+  .log b { color: #374151; }
+  .feedback-note { font-size: 11px; color:#7c3aed; background:#f5f3ff; border:1px solid #e9d5ff; border-radius:7px; padding:7px 10px; margin-top:10px; }
+
+  .reflect-item { padding: 8px 0; border-bottom: 1px solid #f0f0f6; font-size: 12px; }
+  .reflect-item:last-child { border-bottom: none; }
+  .reflect-q { font-weight: 700; color: #4b5563; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  .reflect-a { color: #374151; margin-top: 2px; }
+  .note { font-size: 11px; color: #9ca3af; margin-top: 10px; }
+</style>
 </head>
 <body>
-  <header>
-    <h1>Today's Brief — {{TODAY_LOCAL}}</h1>
-    <div class="meta">Generated {{GENERATED_AT}} · Time zone: {{TIMEZONE_LABEL}}</div>
-  </header>
 
-  <main>
-    <!-- ============== SECTION 1 — MEETINGS ============== -->
-    <section data-section="meetings">
-      <h2>1. Today's meetings <span class="section-tag">calendar + cortex</span></h2>
-
-      <!-- BEGIN MEETINGS -->
-      <div class="item read-only-card" data-item-id="meeting-{{MEETING_ID}}">
-        <div class="item-title">{{MEETING_TIME}} — {{MEETING_TITLE}}</div>
-        <div class="item-meta">With: {{MEETING_ATTENDEES}}{{MEETING_LOCATION_SUFFIX}}</div>
-        <div class="item-context">{{MEETING_CONTEXT}}</div>
-      </div>
-      <!-- END MEETINGS -->
-      <!-- Meeting annotations removed in v0.3.0 — meetings are read-only context cards. -->
-      <!-- Use cortex /recall <person> for deeper prep context. -->
-
-      <!-- If zero meetings and empty_state == show_empty, render:
-        <p class="empty">Nothing today.</p>
-      -->
-    </section>
-
-    <!-- ============== SECTION 2 — INBOX ============== -->
-    <section data-section="inbox">
-      <h2>2. Inbox action items <span class="section-tag">gmail + triage</span></h2>
-
-      <!-- BEGIN INBOX -->
-      <div class="item" data-item-id="inbox-{{THREAD_ID}}">
-        <div class="item-title">{{INBOX_SENDER}} — {{INBOX_SUBJECT}}</div>
-        <div class="item-meta">Received {{INBOX_RECEIVED}}</div>
-        <div class="item-context">{{INBOX_SNIPPET}}</div>
-        <div class="item-context"><em>Suggested framing:</em> {{INBOX_SUGGESTED_FRAMING}}</div>
-        <textarea class="annotation"
-                  name="inbox-{{THREAD_ID}}"
-                  data-item-id="inbox-{{THREAD_ID}}"
-                  placeholder="{{HINT_INBOX}}"></textarea>
-      </div>
-      <!-- END INBOX -->
-    </section>
-
-    <!-- ============== SECTION 3 — PRIORITY TASKS ============== -->
-    <section data-section="tasks">
-      <h2>3. Today's priority tasks <span class="section-tag">CRM</span></h2>
-
-      <!-- BEGIN TASKS -->
-      <div class="item" data-item-id="task-{{TASK_ID}}">
-        <div class="item-title">{{TASK_TITLE}}</div>
-        <div class="item-meta">Due {{TASK_DUE}} · {{TASK_RELATED}} · Priority {{TASK_PRIORITY}}</div>
-        <textarea class="annotation"
-                  name="task-{{TASK_ID}}"
-                  data-item-id="task-{{TASK_ID}}"
-                  placeholder="{{HINT_TASK}}"></textarea>
-      </div>
-      <!-- END TASKS -->
-    </section>
-
-    <!-- ============== SECTION 4 — OUTREACH QUEUE ============== -->
-    <section data-section="outreach">
-      <h2>4. Outreach queue <span class="section-tag">weekly-outreach</span></h2>
-
-      <!-- BEGIN OUTREACH -->
-      <div class="item">
-        <div class="item-title">{{OUTREACH_NAME}} — {{OUTREACH_COMPANY}}</div>
-        <div class="item-meta">Last touch: {{OUTREACH_LAST_TOUCH}} · Status: {{OUTREACH_STATUS}}</div>
-      </div>
-      <!-- END OUTREACH -->
-
-      <textarea class="annotation"
-                name="outreach-group"
-                data-item-id="outreach-group"
-                placeholder="{{HINT_OUTREACH}}"></textarea>
-    </section>
-
-    <!-- ============== SECTION 5 — DRAFTS AWAITING APPROVAL ============== -->
-    <section data-section="drafts" class="read-only-card">
-      <h2>5. Drafted replies awaiting approval <span class="section-tag">filled by /process-brief</span></h2>
-      <p class="empty">Drafts will appear here after you run <code>/process-brief</code>.</p>
-      <!-- After /process-brief runs, this section is replaced with a list of:
-        <div class="item">
-          <div class="item-title">✓ {{ACTION_LABEL}}</div>
-          <div class="item-meta">{{ACTION_DETAIL}} · {{ACTION_LINK_HTML}}</div>
-        </div>
-      -->
-    </section>
-
-    <!-- ============== SECTION 6 — YESTERDAY'S REFLECTION ============== -->
-    <section data-section="yesterday-reflection" class="read-only-card">
-      <h2>6. Yesterday's reflection <span class="section-tag">read-only</span></h2>
-      {{YESTERDAY_REFLECTION_HTML}}
-    </section>
-
-    <!-- Section 7 (end-of-day prompts) removed in v0.3.0. -->
-    <!-- Reflection capture now lives in cortex /end-day Step 4. -->
-    <!-- That step appends a ## Reflection section to today's brief markdown, -->
-    <!-- which tomorrow's brief Section 6 reads. -->
-  </main>
-
-  <div class="button-row">
-    <button class="process"
-            type="button"
-            onclick="window.sendPrompt && window.sendPrompt('{{PROCESS_PROMPT}}')">
-      Process all annotations
-    </button>
+<div class="header">
+  <div>
+    <div style="font-size:18px;font-weight:700;color:#fff;">{{DATE_LONG}}</div>
+    <div class="sub">Daily Brief — BrightWay AI</div>
   </div>
+  <div class="badge">{{HEADER_BADGE}}</div>
+</div>
+
+<!-- 1. CENTER OF GRAVITY (always render; not interactive) -->
+<div class="cog">
+  <div class="cog-label">Center of gravity</div>
+  <div class="cog-text">{{CENTER_OF_GRAVITY}}</div>
+</div>
+
+<!-- 2. CALENDAR BLOCK (visual + written) — hide whole card if zero events -->
+<div class="card" data-section="calendar">
+  <div class="card-header blue">📅 Calendar</div>
+  <div class="card-body">
+    <div class="timeline" id="timeline"></div>
+    <div class="tl-legend"><span class="dot" style="background:#2563eb"></span>meeting <span class="dot" style="background:#7c8598"></span>focus / held <span class="dot" style="background:#0ea5a4"></span>personal <span style="margin-left:10px;">window {{TL_WINDOW_LABEL}}</span></div>
+
+    <div style="margin-top:12px;">
+      <!-- repeat .cal-item per event; omit .cal-notes if no notes -->
+      <div class="cal-item">
+        <div class="cal-time">{{EVENT_TIME}}</div>
+        <div>
+          <div class="cal-title">{{EVENT_TITLE}}</div>
+          <div class="cal-who">{{EVENT_WHO}}</div>
+          <div class="cal-notes">{{EVENT_NOTES}}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 3. PRIORITY TASKS (P0/P1 only) — hide card if zero -->
+<div class="card" data-section="tasks">
+  <div class="card-header red">🔴 Priority Tasks</div>
+  <div class="card-body">
+
+    <!-- repeat .task-row per task; data-id unique -->
+    <div class="task-row" data-id="{{TASK_ID}}" data-name="{{TASK_NAME}}">
+      <div class="row-label">{{TASK_NAME}} <span class="item-tag{{TASK_PRIORITY_CLASS}}">{{TASK_PRIORITY}}</span></div>
+      <div class="row-sub">{{TASK_SUB}}</div>
+      <div class="actions">
+        <button class="btn done" onclick="taskAction(this,'done')">✓ Done</button>
+        <button class="btn delegate" onclick="taskAction(this,'delegate')">👉 Delegate</button>
+        <button class="btn skip" onclick="taskAction(this,'skip')">⏭ Skip</button>
+        <button class="btn notimp" onclick="taskAction(this,'not_important')">🚫 Not important</button>
+        <button class="btn annotate" onclick="toggleAnnotation(this)">📝 Annotate</button>
+      </div>
+      <textarea class="annotation" data-item-id="{{TASK_ID}}" name="{{TASK_ID}}"
+                placeholder="{{HINT_TASK}}" oninput="saveAnnotation('{{TASK_ID}}', this.value)"></textarea>
+      <div class="status"></div>
+    </div>
+
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      <div class="progress-text" id="progress-text">0 of 0 done</div>
+    </div>
+    <div class="log" id="task-log"><b>Task action log</b> (mined by /end-day) — <span id="task-log-entries" style="color:#9ca3af;font-style:italic;">no actions yet</span></div>
+  </div>
+</div>
+
+<!-- 4. OUTREACH QUEUE — hide card if zero -->
+<div class="card" data-section="outreach">
+  <div class="card-header purple">📣 Outreach Queue</div>
+  <div class="card-body">
+
+    <!-- repeat .outreach-row per contact; data-id unique. Emit the matching signal
+         <option> first so it's pre-selected. {{CONTACT_LINK}} = research URL (LinkedIn
+         profile from the contact's node, else LinkedIn people-search, else web search;
+         always non-empty). {{CONTACT_LINK_LABEL}} = "🔗 LinkedIn" or "🔍 Research". -->
+    <div class="outreach-row" data-id="{{CONTACT_ID}}" data-name="{{CONTACT_NAME}}">
+      <div class="row-label">{{CONTACT_NAME}} <a class="or-link" href="{{CONTACT_LINK}}" target="_blank" rel="noopener">{{CONTACT_LINK_LABEL}}</a></div>
+      <div class="row-sub">{{CONTACT_SUB}}</div>
+      <div class="actions">
+        <button class="btn sent" onclick="outreachAction(this,'sent')">✓ Sent</button>
+        <button class="btn nudge" onclick="outreachAction(this,'nudge')">Nudge</button>
+        <button class="btn skipo" onclick="outreachAction(this,'skip')">Skip</button>
+        <button class="btn letgo" onclick="outreachAction(this,'let_go')">Let go</button>
+      </div>
+      <div class="cat">
+        <label>bucket</label>
+        <select class="oc-bucket"><option>new business</option><option>relationship building</option><option>network expansion</option></select>
+        <label>signal</label>
+        <select class="oc-signal"><option>—</option><option>Engagement</option><option>Job change</option><option>Funding</option><option>Hiring</option><option>Growth/expansion</option><option>Tech-stack change</option><option>Direct intent</option></select>
+        <label>value-add</label>
+        <select class="oc-value"><option>domain observation</option><option>article/framework</option><option>intro</option><option>diagnostic/free sample</option><option>case study/result</option></select>
+      </div>
+      <div class="status"></div>
+    </div>
+
+    <div class="log" id="outreach-log"><b>Outreach log</b> (mined by /end-day) — <span id="outreach-log-entries" style="color:#9ca3af;font-style:italic;">no actions yet</span></div>
+    <div class="feedback-note">Each action records bucket + signal + value-add so /end-day can write the touch to the right node and roll up what's working. "Not important" / "Let go" feed the suppression store.</div>
+  </div>
+</div>
+
+<!-- 5. YESTERDAY'S REFLECTION (always render; read-only) -->
+<div class="card" data-section="reflection">
+  <div class="card-header gray">🪞 Yesterday's Reflection ({{YESTERDAY_LABEL}})</div>
+  <div class="card-body">
+    <div class="reflect-item"><div class="reflect-q">Biggest thing done</div><div class="reflect-a">{{REFLECT_BIGGEST}}</div></div>
+    <div class="reflect-item"><div class="reflect-q">What blocked you</div><div class="reflect-a">{{REFLECT_BLOCKED}}</div></div>
+    <div class="reflect-item"><div class="reflect-q">The one thing today has to move</div><div class="reflect-a">{{REFLECT_ONE_THING}}</div></div>
+  </div>
+</div>
+
+<p style="font-size:11px;color:#9ca3af;margin-top:8px;text-align:center;">{{FOOTER_NOTE}}</p>
+
+<script>
+const LS_KEY = 'brief-{{DATE_ISO}}';
+// Calendar timeline: window hours + blocks (decimal hours). cls: meeting | focus | personal
+const TL_START = {{TL_START_HOUR}}, TL_END = {{TL_END_HOUR}};
+const BLOCKS = {{TL_BLOCKS_JSON}}; // e.g. [{s:9.5,e:10,label:'Automation chat',cls:'meeting'}]
+
+function load(){ try { return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); } catch(e){ return {}; } }
+function save(s){ s.last_interaction_at = new Date().toISOString(); s.schema_version = '0.5.0'; localStorage.setItem(LS_KEY, JSON.stringify(s)); }
+let state = load();
+state.tasks = state.tasks || {};
+state.annotations = state.annotations || {};
+state.outreach_actions = state.outreach_actions || {};
+state.tasks_checked = state.tasks_checked || {};
+
+(function buildTimeline(){
+  const tl = document.getElementById('timeline'); if(!tl) return;
+  const span = TL_END - TL_START;
+  const hours = document.createElement('div'); hours.className='tl-hours';
+  for(let h=TL_START; h<=TL_END; h++){
+    const x=((h-TL_START)/span)*100; const line=document.createElement('div'); line.className='tl-hour'; line.style.left=x+'%';
+    const lab=document.createElement('span'); lab.textContent=(h%12||12)+(h<12?'a':'p'); line.appendChild(lab); hours.appendChild(line);
+  }
+  tl.appendChild(hours);
+  (BLOCKS||[]).forEach(b=>{
+    let left=((b.s-TL_START)/span)*100, width=((b.e-b.s)/span)*100;
+    left=Math.max(0,Math.min(100,left)); width=Math.max(2,Math.min(100-left,width)); // clamp out-of-window events
+    const el=document.createElement('div'); el.className='tl-block '+(b.cls||'meeting');
+    el.style.left=left+'%'; el.style.width='calc('+width+'% - 2px)'; el.textContent=b.label; tl.appendChild(el);
+  });
+})();
+
+const T_LABEL={done:'✓ Done',delegate:'👉 Delegated',skip:'⏭ Skipped',not_important:'🚫 Not important'};
+const T_COLOR={done:'#065f46',delegate:'#1d4ed8',skip:'#92400e',not_important:'#991b1b'};
+const O_COLOR={sent:'#065f46',nudge:'#92400e',skip:'#4b5563',let_go:'#991b1b',booked:'#1e40af',dead:'#991b1b'};
+
+function updateProgress(){
+  const rows=document.querySelectorAll('.task-row'); let done=0;
+  rows.forEach(r=>{ const t=state.tasks[r.dataset.id]; if(t&&t.action==='done') done++; });
+  const pct=rows.length?Math.round(done/rows.length*100):0;
+  document.getElementById('progress-fill').style.width=pct+'%';
+  document.getElementById('progress-text').textContent=done+' of '+rows.length+' done';
+}
+function applyTask(row){
+  const ta=row.querySelector('textarea.annotation'), id=row.dataset.id;
+  if(ta && state.annotations[id]){ ta.value=state.annotations[id]; ta.style.display='block'; }
+  const t=state.tasks[id]; if(!t) return;
+  const lbl=row.querySelector('.row-label'),sub=row.querySelector('.row-sub'),st=row.querySelector('.status');
+  const struck=(t.action==='done'||t.action==='not_important');
+  lbl.classList.toggle('struck',struck); sub.classList.toggle('struck',struck);
+  st.style.display='block'; st.style.color=T_COLOR[t.action]||'#374151';
+  st.textContent=T_LABEL[t.action]+(t.detail?' · '+t.detail:'')+' · '+t.ts;
+}
+function taskAction(btn,action){
+  const row=btn.closest('.task-row'),id=row.dataset.id; let detail='';
+  if(action==='delegate'){ detail=(prompt('Delegate to whom?','Erica')||'').trim(); if(!detail) return; }
+  else if(action==='skip'){ detail=(prompt('Skip for how long? (1d, 3d, next week)','3d')||'').trim(); }
+  else if(action==='not_important'){ if(!confirm('Mark "not important" and stop surfacing this in future briefs?')) return; }
+  state.tasks[id]={action,detail,ts:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),name:row.dataset.name};
+  state.tasks_checked[id]=(action==='done'); // back-compat mirror
+  save(state); applyTask(row); renderTaskLog(); updateProgress();
+}
+function toggleAnnotation(btn){
+  const ta=btn.closest('.task-row').querySelector('textarea.annotation');
+  ta.style.display=(ta.style.display==='block')?'none':'block'; if(ta.style.display==='block') ta.focus();
+}
+function saveAnnotation(id,val){ if(val&&val.trim()) state.annotations[id]=val; else delete state.annotations[id]; save(state); }
+function renderTaskLog(){
+  const el=document.getElementById('task-log-entries'); const e=Object.entries(state.tasks);
+  el.innerHTML=e.length?e.map(([id,t])=>`<strong>${t.name||id}</strong> → ${t.action}${t.detail?(' ('+t.detail+')'):''} · ${t.ts}`).join(' &nbsp;·&nbsp; '):'<span style="color:#9ca3af;font-style:italic;">no actions yet</span>';
+}
+function applyOutreach(row){
+  const o=state.outreach_actions[row.dataset.id]; if(!o) return;
+  ['bucket','signal','value_add'].forEach(k=>{ const sel=row.querySelector('.oc-'+(k==='value_add'?'value':k)); if(sel&&o[k]) sel.value=o[k]; });
+  row.querySelectorAll('.actions .btn').forEach(b=>{ b.style.opacity='.4'; b.disabled=true; });
+  const st=row.querySelector('.status'); st.style.display='block'; st.style.color=O_COLOR[o.action]||'#374151';
+  st.textContent='✓ '+o.action+' · '+o.bucket+(o.signal&&o.signal!=='—'?' · '+o.signal:'')+' · '+o.value_add+' · '+o.ts;
+}
+function outreachAction(btn,action){
+  const row=btn.closest('.outreach-row'),id=row.dataset.id;
+  const bucket=row.querySelector('.oc-bucket').value,signal=row.querySelector('.oc-signal').value,value_add=row.querySelector('.oc-value').value;
+  state.outreach_actions[id]={name:row.dataset.name,action,bucket,signal,value_add,ts:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})};
+  save(state); applyOutreach(row); renderOutreachLog();
+}
+function renderOutreachLog(){
+  const el=document.getElementById('outreach-log-entries'); const e=Object.entries(state.outreach_actions);
+  el.innerHTML=e.length?e.map(([id,o])=>`<strong>${o.name||id}</strong> → ${o.action} <em>(${o.bucket}${o.signal&&o.signal!=='—'?', '+o.signal:''}, ${o.value_add})</em> · ${o.ts}`).join('<br>'):'<span style="color:#9ca3af;font-style:italic;">no actions yet</span>';
+}
+
+document.querySelectorAll('.task-row').forEach(applyTask);
+document.querySelectorAll('.outreach-row').forEach(applyOutreach);
+renderTaskLog(); renderOutreachLog(); updateProgress();
+</script>
 </body>
 </html>

@@ -1,12 +1,17 @@
 ---
-description: Generate or refresh today's daily brief as a live Cowork artifact titled "Today's Brief". Pulls calendar, inbox action items, CRM priority tasks, outreach queue, yesterday's reflection. Writes a markdown snapshot to `<config-root>/briefs/YYYY-MM-DD.md` and renders the artifact via Cowork's create_artifact / update_artifact. Run again any time to refresh.
+description: Generate or refresh today's daily brief as the persistent Cowork artifact "Today's Brief" (stable id `todays-brief`). Renders 5 fixed sections — Center of Gravity, Calendar Block (visual timeline + written list), Priority Tasks (richer actions), Outreach Queue (actions + category tags), Yesterday's Reflection. Filters everything against `memory/surfacing-prefs.md` before render. Writes a markdown twin to `<config-root>/briefs/YYYY-MM-DD.md`. Run again any time to refresh; state persists in localStorage `brief-YYYY-MM-DD`.
 ---
 
 # /brief
 
-Builds today's working surface. The output is two things: a markdown snapshot for audit (`<config-root>/briefs/YYYY-MM-DD.md`) and a live Cowork artifact titled "Today's Brief" with textarea annotations per item. After you annotate, run `/process-brief` to act on the annotations.
+Builds today's working surface. The output is two coordinated things:
 
-This command is **read-only across all sources**. It does not draft replies, modify CRM tasks, or send anything. That work happens in `/process-brief`.
+1. A **markdown twin** for audit at `<config-root>/briefs/YYYY-MM-DD.md` (the canonical text record).
+2. A live Cowork **artifact** with stable id `todays-brief` — the working surface, with richer per-item actions that persist to localStorage and get mined by `/end-day`.
+
+This command is **read-only across all sources**. It does not draft replies, modify CRM tasks, or send anything. Acting on annotations happens in `/process-brief`; mining the actions happens in `/end-day`.
+
+**The brief is a working surface, not a read-only snapshot (v0.5.0).** Every interactive action writes to one localStorage blob keyed `brief-YYYY-MM-DD` and is mined by `/end-day` Step 2c.
 
 ---
 
@@ -16,7 +21,7 @@ This command is **read-only across all sources**. It does not draft replies, mod
 
 Ensure access to `~/Documents`. In Cowork, call `request_cowork_directory(~/Documents)` once if not already granted. In Claude Code (or any environment with direct filesystem access), no mount is needed. Then read `~/Documents/.claude-plugin-config-root`.
 
-- **Pointer exists**: read line 1 → that's `<config-root>`. Ensure access to `<config-root>`. If running in Cowork and the folder isn't already mounted in this session, call `request_cowork_directory(<config-root>)`. If running in Claude Code or another environment with direct filesystem access, no mount call is needed. Continue to section B.
+- **Pointer exists**: read line 1 → that's `<config-root>`. Ensure access to `<config-root>` (in Cowork, `request_cowork_directory(<config-root>)` if not already mounted). Continue to section B.
 - **Pointer missing**: prompt the user to run `/setup-brief` (or any other plugin's setup command) first, then stop. The brief cannot run without a config root.
 
 ### B — Load plugin config
@@ -24,7 +29,7 @@ Ensure access to `~/Documents`. In Cowork, call `request_cowork_directory(~/Docu
 Read `<config-root>/plugins/daily-brief.user-context.md`.
 
 - **Exists** → parse `sections_enabled`, sort defaults, empty-state behavior, annotation placeholders.
-- **Missing** → ask: "I don't see your daily-brief config. Want to run `/setup-brief` first, or use defaults (all 7 sections, conservative settings)?" Default to "use defaults" if the user is in a hurry.
+- **Missing** → ask: "I don't see your daily-brief config. Want to run `/setup-brief` first, or use defaults?" Default to "use defaults" if the user is in a hurry.
 
 If `brief_enabled` is `false`, stop with: "Daily brief is disabled. Re-enable in `<config-root>/plugins/daily-brief.user-context.md`."
 
@@ -32,226 +37,215 @@ If `brief_enabled` is `false`, stop with: "Daily brief is disabled. Re-enable in
 
 Read `<config-root>/identity.md` for time zone (defines "today") and tool inventory (decides which sections will have data).
 
-### D — Resolve today's date
+### D — Load surfacing preferences (v0.5.0 — REQUIRED filter)
 
-`today_local = current date in user's time zone from identity.md` (fallback: system local date if time zone missing). Format: `YYYY-MM-DD`.
+Read `<config-root>/memory/surfacing-prefs.md`. This is the canonical suppression store (written by `/end-day` from `not_important` actions and the repeat-ignore rule). Parse:
 
-`yesterday_local = today_local - 1 day` (calendar day, not 24 hours).
+- **Do-not-resurface list** — explicit per-item suppressions. An item whose title/source matches a suppressed entry MUST NOT be rendered as a priority task or outreach item, unless its linked re-surface condition has flipped.
+- **Surfacing rules** — noise classes (admin/finance dunning, vendor cert/onboarding nudges). Items matching a noise class are demoted (never P0/P1); route to a low-priority "admin" mention at most, or drop.
+
+If `surfacing-prefs.md` is missing, proceed without filtering but note it once: "No surfacing-prefs.md found — brief is unfiltered. `/end-day` will create it the first time you mark something 'not important.'"
+
+### E — Resolve dates
+
+`today_local = current date in user's time zone from identity.md` (fallback: system local date). Format `YYYY-MM-DD`.
+`yesterday_local = today_local − 1 calendar day`.
+
+When `/end-day` invokes this command to pre-stage, it passes `target_date = tomorrow_local`; use that in place of `today_local` everywhere below (and `target_date − 1` for the reflection read).
 
 ---
 
-## Step 1 — Pull source data (in parallel where possible)
+## Step 1 — Pull source data (in parallel where possible), then filter
 
-Each enabled section in `sections_enabled` triggers its source pull. Sections disabled in config are skipped entirely.
+Pull each section's source, then **apply the Step 0D filter before anything is rendered**. Suppressed/noise items are dropped silently; log the count of filtered items for the markdown twin's footer ("N items filtered by surfacing-prefs").
 
-### Section 1 — Today's meetings
+### Center of Gravity (section 1)
 
-Pull today's calendar via the connected calendar MCP. For each event:
+The single most important thing for the day, one or two sentences. Derive from, in order of preference:
+1. Yesterday's reflection "the one thing tomorrow has to move" (read from `briefs/<yesterday_local>.md` `## Reflection`).
+2. The top P0 priority task after filtering.
+Phrase it as a directive sentence. Add upstream context if it sharpens urgency ("X start ~July 1 creates pull"). Not interactive.
 
-- Title, start, end, location / video link
-- Attendees (excluding you)
-- For each external attendee, attempt to find a cortex node:
-  - Look for `<config-root>/memory/person/<firstname>-<lastname>.md` (if Phase 3 person pages exist)
-  - Fall back to `<config-root>/memory/client/<slug>.md` if the attendee's company appears in any client node
-  - Capture: most recent activity date, last known thread, any open commitments to / from this person
-- Skip blocked time and personal events the user has flagged personal (configurable later — for v1, include all events).
+### Calendar Block (section 2)
 
-Sort per config (default: `start_time_asc`).
+Pull today's calendar via the connected calendar MCP. For each event, capture: title, start, end, location/video link, attendees (excluding you). Cap at 12.
 
-**Meetings are read-only context cards as of daily-brief v0.3.0.** The annotation textarea per meeting was removed — talking-point annotations didn't route to anything more useful than a bullet append to the markdown file, and the empty textareas were the loudest source of "process-brief overhead" UX friction. To add prep notes for a meeting, edit the markdown snapshot directly or use cortex `/recall <person>` to surface context.
+For each external attendee, attempt to find a cortex node and pull one line of context:
+- `<config-root>/memory/person/<firstname>-<lastname>.md` → most recent interaction, open commitments, "why this matters / last touch."
+- Fall back to `<config-root>/memory/client/<slug>.md` if the company appears in a client node, or the event description.
 
-If there are no meetings today, hide the entire section in the artifact (don't render an empty card).
+Two coordinated views are rendered (Step 3):
+- **Visual timeline strip** — 8a–6p horizontal scale, one block per event positioned by time, color-coded `meeting` / `focus` / `personal` / `open`.
+- **Written block list** — time, title, attendees, and **notes where available** (the one-line context above; "why this matters / last touch" for known person/client nodes).
 
-### Section 2 — Inbox action items
+Meetings are **read-only context cards** (no actions). If zero meetings, hide the whole calendar card.
 
-If the user has the `inbox-triage` plugin installed and its skill `triage-inbox` is available, delegate to it:
+### Priority Tasks (section 3)
 
-- Run the skill; expect a structured list of top 3-7 Needs-reply-today threads with sender, subject, snippet, suggested framing.
-
-If `inbox-triage` is not installed, fall back to the simple heuristic:
-
-- Gmail search: `is:unread newer_than:1d (to:me OR cc:me)` AND the last message is not from the user.
-- Return up to 7 threads. Each item: sender display name, subject, first 200 chars of last message, message_id (for reply linking later).
-
-### Section 3 — Today's priority tasks
-
-Query CRM (HubSpot MCP if available; otherwise skip with a "CRM not connected" placeholder):
-
+Query CRM (HubSpot MCP if available; otherwise render "CRM not connected" placeholder):
 - Tasks where `owner = current user`, `due_date <= today_local`, `status != completed`.
-- Sort per config (default: priority desc, then due_date asc).
-- Cap at 12. Anything beyond goes into a "+N more" tail line.
+- **Keep P0 and P1 only.** P2 and lower do NOT appear — reduces clutter (spec A.1 §3).
+- **Filter against surfacing-prefs** (Step 0D): drop suppressed items; demote noise-class items out of the priority card.
+- Sort: priority desc, then due_date asc. Cap at 12.
 
-For each task: title, due date, related contact / deal (if any), priority.
+For each surviving task capture: stable `task-<id>` id, title, due date, related contact/deal, priority (P0/P1). Each row renders the richer action set (Step A.2: done / delegate / skip / not_important / annotate). Hide the card if zero tasks survive.
 
-### Section 4 — Outreach queue
+### Outreach Queue (section 4)
 
-If `weekly-outreach` plugin is installed and has produced a current week's queue (look in `<config-root>/plugins/weekly-outreach.*` for the latest queue file referenced by that plugin), pull today's slice:
+Source from the relationships/lead-engine pipeline (look in `<config-root>/relationships/today.json` if present; else the relationships plugin's current queue; legacy `<config-root>/plugins/weekly-outreach.*` fallback only if relationships isn't installed).
 
-- For each contact in the queue scheduled for today (or unscheduled but flagged for this week with no specific day), include: name, company, last touch date, draft status (drafted / pending / sent).
-- If no current queue → if config `empty_state.outreach == hide`, omit the section; otherwise render with "No outreach scheduled today."
+- Tier each contact: **Today** (scheduled/flagged today), **This week** (`due_date <= today + 7d` or weekly-cadence overdue), **Backlog** (flagged, not date-scoped).
+- For each contact capture: stable `outreach-<id>` id, name, title/company, last touch, a one-line "why," and — if the pipeline entry carries one — the **signal type** (one of lead-engine's 7: Engagement / Job change / Funding / Hiring / Growth-expansion / Tech-stack change / Direct intent). The signal is stored on the row's `data-signal` so it auto-fills the tag without asking.
+- **Research link (v0.5.0)** — capture a `research_url` + `link_label` for each contact so the user can open them up before reaching out. Resolve in this order:
+  1. A LinkedIn profile URL stored on the contact's cortex node — check `<config-root>/memory/person/<slug>.md` and `<config-root>/memory/bizdev/<slug>.md` for a `linkedin:` field, a `## Linked entities` LinkedIn link, or a LinkedIn URL anywhere in the node. If found → `research_url = <that URL>`, `link_label = "🔗 LinkedIn"`. Also accept a LinkedIn URL carried directly on the pipeline entry.
+  2. Else build a LinkedIn people-search URL from name (+ company if known): `https://www.linkedin.com/search/results/people/?keywords=<URL-encoded "Name Company">`. `link_label = "🔍 Research"`.
+  3. Else (no name usable) a plain web search: `https://www.google.com/search?q=<URL-encoded "Name Company">`. `link_label = "🔍 Research"`.
+  Always produce a non-empty `research_url`.
+- Filter against surfacing-prefs. Hide empty tiers; hide the card if all tiers empty.
 
-### Section 5 — Drafted replies awaiting approval
+Each row renders per-contact actions (Sent / Nudge / Booked / Skip / Let go) plus an **optional** category quick-tag (bucket + value-add chips), revealed after an action is logged (decision D.3: optional/skippable, not required).
 
-This section is populated by `/process-brief`. **Hide entirely on a fresh `/brief` run when no drafts exist** (daily-brief v0.3.0 — don't show a placeholder for nothing). Render only after `/process-brief` has produced at least one draft today; thereafter the section persists until the next morning's brief regenerates.
+### Yesterday's Reflection (section 5)
 
-### Section 6 — Yesterday's reflection
+Read `<config-root>/briefs/<yesterday_local>.md` `## Reflection` (written by `/end-day` Step 4). Show at minimum **biggest thing done** and **the one thing that has to move today** (the latter also feeds section 1).
 
-Read `<config-root>/briefs/<yesterday_local>.md` if it exists.
+- Exists with `## Reflection` → render read-only.
+- Exists without it → "No reflection logged yesterday — run `/end-day` next time to capture one."
+- Missing → "No brief yesterday."
 
-- **Exists with a `## Reflection` section** (appended by yesterday's `/end-day`) → display the reflection content read-only.
-- **Exists without a `## Reflection` section** (yesterday's `/end-day` wasn't run) → "No reflection logged yesterday — run `/end-day` next time to capture one."
-- **Missing** → "No brief yesterday."
-
-End-of-day reflection capture moved to cortex's `/end-day` Step 4 as of daily-brief v0.3.0 — the brief no longer carries empty reflection textareas. Reflection prompts live where reflection actually happens.
+Always render this card (it's required).
 
 ---
 
-## Step 2 — Write the markdown snapshot
+## Step 2 — Write the markdown twin
 
-Write the assembled brief content to `<config-root>/briefs/<today_local>.md`. Use this structure (the markdown is the canonical record; the artifact is a render of it):
+Write the assembled content to `<config-root>/briefs/<today_local>.md`. The markdown is the canonical text record; the artifact is a render of it. Section order is fixed and matches the artifact:
 
 ```markdown
 # Today's Brief — <today_local>
 
-> Generated <ISO-8601 timestamp>
+> Generated <ISO-8601 timestamp> · <N> items filtered by surfacing-prefs
 
-## 1. Meetings
+## 1. Center of Gravity
+
+<one or two sentences>
+
+## 2. Calendar
 
 ### <time> — <title>
-- **With:** <attendee list>
-- **Context:** <cortex snippet, 1-2 lines>
-- **Open thread:** <if any>
+- **With:** <attendees>
+- **Notes:** <context / why this matters / last touch — if available>
 
-(repeat per meeting — read-only context, no annotation)
-(omit this whole section if zero meetings)
+(repeat per meeting; omit section if zero)
 
-## 2. Inbox action items
-
-### <sender> — <subject>
-- **Received:** <timestamp>
-- **Snippet:** <first 200 chars>
-- **Suggested framing:** <1-2 lines from inbox-triage if available>
-- **Annotation:** _(empty)_
-
-(repeat — omit section if zero items)
-
-## 3. Priority tasks
+## 3. Priority Tasks
 
 | Task | Due | Related | Priority |
 |---|---|---|---|
-| ... | ... | ... | ... |
+| <title> | <due> | <related> | P0/P1 |
 
-- **Annotation per task:** _(empty)_
+(P0/P1 only; omit section if zero)
 
-(omit section if zero tasks)
+## 4. Outreach Queue
 
-## 4. Outreach queue
+### Today
+- <name> — <company> · last touch <date> · <why> [signal: <type>] · [research](<research_url>)
 
-(list — omit section if no outreach scheduled today)
+### This week
+- ...
 
-## 5. Drafted replies awaiting approval
+### Backlog
+- ...
 
-(omit section if no drafts yet; populated by /process-brief)
+(omit empty tiers; omit section if all empty)
 
-## 6. Yesterday's reflection
+## 5. Yesterday's Reflection
 
-<content from yesterday's brief's `## Reflection` section, or "No reflection logged yesterday">
-
-(end-of-day prompts removed in v0.3.0 — reflection is captured by cortex /end-day Step 4 instead)
+<content from yesterday's `## Reflection`, or the appropriate placeholder>
 ```
 
-Create the `<config-root>/briefs/` directory if it doesn't exist. Overwrite today's file if it already exists (re-runs replace; yesterday's file is untouched).
+Create `<config-root>/briefs/` if missing. Overwrite today's file on re-run; yesterday's file is untouched.
 
 ---
 
-## Step 3 — Render the Cowork artifact (v0.4.0 canonical 6-section format)
+## Step 3 — Render the Cowork artifact (stable id `todays-brief`)
 
-**Artifact identity rule (v0.4.0+):** the artifact id is ALWAYS `todays-brief`. Both `/brief` and cortex `/end-day` Step 5 reference the same persistent surface. Never create a new artifact with a different id; never produce a markdown-only fallback when Cowork is available.
+**Artifact identity rule:** the artifact id is ALWAYS `todays-brief`. Both `/brief` and cortex `/end-day` Step 5 `update_artifact` this same surface. Never create a parallel artifact; never produce a markdown-only fallback when Cowork is available. Formatting MUST be identical regardless of which command produced it.
 
-Load the HTML template from `references/brief-artifact-template.html` (bundled with the plugin source). Substitute template placeholders with today's data — section by section. Each annotation field becomes a real `<textarea>` with the configured placeholder hint.
+Load `references/brief-artifact-template.html` (v2 layout). Substitute these tokens with today's filtered data:
 
-### Canonical 6-section format (v0.4.0 — closes workstream/nucleus-improvements observation 2026-05-21)
+**Header / meta**
+- `{{DATE_LONG}}` = e.g. "Tuesday, June 9". `{{DATE_ISO}}` = `<today_local>` (drives `LS_KEY = brief-<today_local>`).
+- `{{HEADER_BADGE}}` = one-line day descriptor (e.g. "Light calendar · ship the B&S plan").
+- `{{FOOTER_NOTE}}` = e.g. "Run /brief to refresh · /process-brief to act on annotations · actions feed /end-day".
+- `{{META_DESCRIPTION}}` = one-line artifact description. `{{META_MCP_TOOLS}}` / `{{META_MCP_SERVERS}}` = JSON arrays of the runtime's connected calendar/email/CRM MCP tool ids + server names (emit `[]` if none). In Claude Code, drop the whole `<script id="cowork-artifact-meta">` block.
 
-The artifact MUST include these sections in this order. Sections with zero content are hidden (cleaner surface) UNLESS the section is required (header, yesterday's reflection).
+**1. Center of Gravity** — `{{CENTER_OF_GRAVITY}}` = the one-or-two-sentence directive.
 
-1. **Sticky header** — date badge, "generated at" timestamp, total counts line ("3 meetings · 5 inbox items · 7 tasks · 4 outreach"), and a progress bar reflecting checked-off priority tasks. Always visible (sticky on scroll).
+**2. Calendar** — feed the visual strip via the `<script>` constants, then repeat the written `.cal-item` block:
+- `{{TL_START_HOUR}}` / `{{TL_END_HOUR}}` = the day window in whole hours (default `8` / `18`). `{{TL_WINDOW_LABEL}}` = e.g. "8a–6p".
+- `{{TL_BLOCKS_JSON}}` = a JS array literal, one object per event, **decimal hours**: `[{s:9.5,e:10,label:'Automation chat',cls:'meeting'},{s:12,e:13,label:'Focus',cls:'focus'}]`. `cls` ∈ `meeting` | `focus` | `personal`. Emit `[]` if no events. (The template's `buildTimeline()` positions blocks against the window — no manual `left%`/`width%`.)
+- Repeat the `.cal-item` block per event: `{{EVENT_TIME}}` (e.g. "9:30–10:00"), `{{EVENT_TITLE}}`, `{{EVENT_WHO}}` (attendees + location), `{{EVENT_NOTES}}` (the one-line context / why-this-matters / last-touch; omit the `.cal-notes` div if no notes).
 
-2. **Day-at-a-glance timeline strip** — horizontal strip with meeting blocks placed by time (8am-6pm scale). Each block links to the corresponding meeting card below on click. Quick visual of "how booked is today." Always visible; renders empty timeline if no meetings.
+**3. Priority Tasks** — repeat the `.task-row` block per task (P0/P1 only, post-filter):
+- `data-id="task-<id>"`, `{{TASK_ID}}` = same id, `{{TASK_NAME}}` = title, `{{TASK_PRIORITY}}` = `P0`/`P1`, `{{TASK_PRIORITY_CLASS}}` = `` for P0 or ` p1` for P1, `{{TASK_SUB}}` = one-line context, `{{HINT_TASK}}` = annotation placeholder from config.
 
-3. **Meetings card** — per-meeting context blocks. **Read-only** as of v0.3.0 (no annotation textareas; use cortex `/recall <person>` for prep). Hide if zero meetings.
+**4. Outreach Queue** — repeat the `.outreach-row` block per contact (post-filter, ordered today → this week → backlog):
+- `data-id="outreach-<id>"`, `{{CONTACT_ID}}` = same id, `{{CONTACT_NAME}}`, `{{CONTACT_SUB}}` = title/company · last touch · one-line why.
+- **Signal auto-fill:** in the `.oc-signal` select, emit the contact's pipeline signal as the FIRST `<option>` so it's pre-selected (fall back to `—` first if no signal). Bucket/value-add stay at their template defaults (optional — the user can change them; they're captured on action).
+- `{{CONTACT_LINK}}` = the `research_url` resolved in Step 1; `{{CONTACT_LINK_LABEL}}` = `🔗 LinkedIn` when a real profile URL is known, else `🔍 Research`.
 
-4. **Priority tasks card — INTERACTIVE (v0.4.0)** — P0 tasks only. Each row:
-   - **Interactive checkbox** keyed by task ID. State persists in the single JSON-blob localStorage entry described below (path: `brief-YYYY-MM-DD` → field `tasks_checked.<task_id>`).
-   - Task title, due date, related contact/deal, priority badge.
-   - Per-task annotation textarea (existing behavior).
-   - Progress bar in sticky header reflects checked-off ratio in real time.
-   - **P1 and lower tasks are NOT shown in this card.** Reduces clutter; surfaces only what matters today.
-   - Hide card if zero P0 tasks.
+**5. Yesterday's Reflection** — `{{YESTERDAY_LABEL}}` = e.g. "Mon 6/8"; `{{REFLECT_BIGGEST}}` / `{{REFLECT_BLOCKED}}` / `{{REFLECT_ONE_THING}}` from yesterday's `## Reflection` (use "—" for blanks).
 
-5. **Bizdev outreach queue — TIERED (v0.4.0)** — outreach items grouped into 4 collapsible tiers:
-   - **Today** — items scheduled or flagged for today
-   - **Next week** — items with `due_date <= today + 7d` or weekly-cadence overdue items
-   - **Early next month** — items with `due_date <= today + 35d`
-   - **Backlog** — everything else flagged but not date-scoped
-   
-   Each item: contact name, company, last touch, draft status (drafted / pending / sent). Per-item annotation textarea preserved.
-   
-   Hide tiers with zero items. Hide the whole card if all tiers empty.
+Hide any non-required card whose content is empty by omitting its `<div class="card" data-section="...">`. Center of Gravity and Yesterday's Reflection always render. To hide the calendar strip cleanly when there are no events, emit `{{TL_BLOCKS_JSON}}` = `[]` and omit the calendar card.
 
-6. **Yesterday's reflection (read-only)** — content from yesterday's `## Reflection` (written by cortex `/end-day` Step 4). Always visible (renders "No reflection logged yesterday" placeholder if missing).
+### localStorage contract (canonical — schema_version 0.5.0)
 
-### Interactive state contract (v0.4.0+; canonical shape locked in v0.4.1)
+ONE JSON blob per day at key `brief-<today_local>`:
 
-**ONE JSON blob per day, stored in `localStorage` under a single date-rotating key.** All readers and writers use the same shape. No per-task sub-keys, no nested namespaces — just the one blob:
-
-```javascript
-// Key: "brief-YYYY-MM-DD" (rotates with the date; yesterday's key is left in place for audit but no longer read)
-localStorage.setItem("brief-YYYY-MM-DD", JSON.stringify({
-  schema_version: "0.4.1",
-  tasks_checked: { "task-12345": true, "task-67890": false },   // task id → bool
-  annotations: { "inbox-<thread_id>": "draft reply: ...", "task-12345": "moved to tomorrow" },   // item id → free-form
-  outreach_tier_collapsed: { today: false, next_week: false, early_next_month: true, backlog: true },
-  last_interaction_at: "2026-05-28T14:32:00-04:00"
-}));
+```json
+{
+  "schema_version": "0.5.0",
+  "tasks":            { "<task-id>":    { "action": "done|delegate|skip|not_important", "detail": "", "ts": "", "name": "" } },
+  "annotations":      { "<item-id>":    "free text" },
+  "outreach_actions": { "<contact-id>": { "name": "", "action": "sent|nudge|skip|let_go|booked|dead", "bucket": "", "signal": "", "value_add": "", "detail": "", "ts": "" } },
+  "tasks_checked":    { "<task-id>": true },
+  "last_interaction_at": "ISO8601"
+}
 ```
 
-**Reader pattern (use this exact incantation):**
+`tasks_checked` is a back-compat mirror — the template sets `tasks_checked[id] = (action === "done")` whenever a task action fires, so v0.4.x readers keep working. New readers use `tasks`. The UI emits outreach actions `sent|nudge|skip|let_go`; `booked`/`dead` are reader-accepted synonyms (`dead` = `let_go`) but not rendered by default.
+
+Reader pattern (used by `/process-brief` and `/end-day`):
 
 ```javascript
-const state = JSON.parse(localStorage.getItem(`brief-${today_local}`) || "{}");
-const tasksChecked = state.tasks_checked || {};
-const annotations = state.annotations || {};
+const state = JSON.parse(widget_context["brief-<date>"] || "{}");
+const tasks       = state.tasks || {};               // {task_id: {action, detail, ts, name}}
+const annotations = state.annotations || {};          // {item_id: free-text}
+const outreach    = state.outreach_actions || {};     // {contact_id: {name, action, bucket, signal, value_add, detail, ts}}
 ```
 
-**State persists across the day.** Re-running `/brief` mid-day preserves checkbox state and annotations (see Step 3a below). The day's checked-off-task ratio drives the progress bar in the sticky header.
+**Migration from 0.4.x:** earlier briefs stored `tasks_checked: {id: bool}`. A reader encountering `tasks_checked` but no `tasks` should treat each `true` as `{action: "done"}`. The template's `save()` always writes `schema_version: "0.5.0"` going forward.
 
-**State is read by `/end-day`**: cortex `/end-day` Step 4.0 (per `cortex v4.12.2+` spec) reads `state.tasks_checked` and `state.annotations` via `mcp__cowork__read_widget_context(artifact_id="todays-brief")` and uses them to pre-fill the reflection prompts. This closes the loop — the brief is a living surface, not a one-shot snapshot.
+**State is read by `/end-day` Step 2c** (mine the brief) and Step 4.0 (pre-fill reflection) via `mcp__cowork__read_widget_context(artifact_id="todays-brief")`.
 
-**v0.4.1 fix from v0.4.0 review:** earlier versions of this spec described the localStorage shape in three different ways across `brief.md` and `process-brief.md` — `brief-YYYY-MM-DD.tasks.<task_id>` (per-task keys), `brief-YYYY-MM-DD` JSON blob with `tasks_checked` dict, and `brief-YYYY-MM-DD.tasks_checked` (nested key). The canonical shape is the JSON-blob form above. Any earlier reader that expected per-task sub-keys must be updated to read the JSON blob.
+### Decide create vs. update (race-aware)
 
-Decide create vs. update (v0.4.2+ race-aware):
+1. `mcp__cowork__list_artifacts` → look for id `todays-brief`.
+2. If found, check `metadata.target_date`:
+   - `== intended-date` (`today_local` for `/brief`, `tomorrow_local` for `/end-day` Step 5) → `mcp__cowork__update_artifact(artifact_id="todays-brief", content=<HTML>, metadata={target_date, plugin:"daily-brief", schema_version:"0.5.0"})`. Preserve matching annotation/task state by item id (Step 3a).
+   - `!= intended-date` → DO NOT silently overwrite. Surface: "⚠ `todays-brief` exists with target_date `<existing>`; about to write `<new>`. This is a `/brief`↔`/end-day` race. Proceed (last-write-wins) or abort?" On proceed → update; on abort → exit Step 3.
+   - older than `today_local` → update with fresh content (the old day's final state is in its markdown twin).
+3. If not found → `mcp__cowork__create_artifact(id="todays-brief", artifact_type="html", content=<HTML>, metadata={target_date, plugin:"daily-brief", schema_version:"0.5.0"})`.
 
-1. Call `mcp__cowork__list_artifacts` and look for the artifact by id `todays-brief` (canonical id; v0.4.0+).
-2. If found, **check its metadata `target_date` field** (v0.4.2+):
-   - If `target_date == <intended-date>` (where intended-date is `today_local` for `/brief`, or `tomorrow_local` for cortex `/end-day` Step 5 pre-stage) → safe to update. Call `mcp__cowork__update_artifact(artifact_id="todays-brief", content=<new HTML>, metadata={target_date: <intended-date>, plugin: "daily-brief", schema_version: "0.4.2"})`. **Preserve any non-empty annotation textarea values + tasks_checked state** that match by item ID (best-effort — see Step 3a).
-   - If `target_date != intended-date` (e.g., `/brief` runs at 4:55pm while `/end-day` Step 5 is mid-pre-stage of tomorrow's brief), **DO NOT silently overwrite**. Surface to the user:
-     > "⚠ Artifact `todays-brief` already exists with `metadata.target_date: <existing>`. About to overwrite with `target_date: <new>`. This indicates a race between `/brief` (today) and `/end-day` Step 5 (tomorrow), or two concurrent `/brief` invocations. Proceed (last-write-wins, may stomp pre-staged tomorrow content), or abort?"
-     On `proceed`: update as normal. On `abort`: exit Step 3 without modifying the artifact.
-3. If found but its `target_date` is older than `<today_local>` (e.g., yesterday's brief that never got pre-staged) → call `mcp__cowork__update_artifact` with fresh content. The old day's annotations belong to a different day; their final state is already in yesterday's markdown snapshot.
-4. If not found → call `mcp__cowork__create_artifact(id="todays-brief", artifact_type="html", content=<rendered>, metadata={target_date: <intended-date>, plugin: "daily-brief", schema_version: "0.4.2"})`.
+### Step 3a — Preserve state across same-day re-runs
 
-**Artifact race serialization (v0.4.2+):** the `target_date` field on metadata is the canonical race-arbiter. Both `/brief` and cortex `/end-day` Step 5 check before overwriting. If they conflict, surface to the user — never silently overwrite. This closes the race surfaced in the second-pass review where "artifact shows tomorrow's content labeled with today's date" could happen.
+When the artifact already exists for the same date:
+1. `mcp__cowork__read_widget_context(artifact_id="todays-brief")` to read the current blob.
+2. The template restores `state.tasks`, `state.annotations`, and `state.outreach_actions` automatically on load (keyed by item id) — so re-rendering with the same item ids preserves everything.
+3. Items dropped from today's data (e.g., a cancelled meeting) leave their prior annotation only as a line in the markdown twin under "Dropped from today's brief at <regen time>."
 
-### Step 3a — Preserve annotations across same-day re-runs
-
-When the artifact already exists for today and the user is re-running `/brief`:
-
-1. Call `mcp__cowork__read_widget_context` on the artifact to retrieve the current annotation textarea values.
-2. Build a map keyed by item ID (e.g., `meeting-<event_id>`, `inbox-<thread_id>`, `task-<task_id>`).
-3. When rendering the new HTML, pre-fill each textarea with its prior value if the same item ID still exists in today's pull.
-4. Items that have dropped out of today's data (e.g., a meeting got cancelled between morning and noon) leave their old annotation only as a line in the markdown snapshot's section under "Dropped from today's brief at <regen time>", so the user can still see it.
-
-In Claude Code (no Cowork artifact tools available), this Step 3 entirely degrades to: write the markdown snapshot, print a "Cowork artifact tools not available in this runtime — brief saved as markdown at `<path>`" message, and stop.
+In Claude Code (no Cowork artifact tools): Step 3 degrades to writing the markdown twin, printing "Cowork artifact tools not available in this runtime — brief saved as markdown at `<path>`", and stopping.
 
 ---
 
@@ -259,16 +253,18 @@ In Claude Code (no Cowork artifact tools available), this Step 3 entirely degrad
 
 Output exactly one chat message:
 
-> "Brief ready for <today_local>. Open the 'Today's Brief' artifact, annotate any sections, then run `/process-brief` when you're done. Markdown snapshot saved at `<config-root>/briefs/<today_local>.md`."
+> "Brief ready for <today_local>. Open the 'Today's Brief' artifact — act on tasks/outreach inline (those actions feed `/end-day`), annotate anything you want drafted, then run `/process-brief`. Markdown twin at `<config-root>/briefs/<today_local>.md`. <N> items filtered by surfacing-prefs."
 
-Don't dump the brief content into chat. The whole point is that it lives in the artifact / on disk, not in chat.
+Don't dump the brief content into chat.
 
 ---
 
 ## Behavior rules
 
-- Read-only across all data sources. No drafts, no task updates, no sends.
-- Same-day re-run = refresh + preserve annotations where item IDs match. Different day = new artifact content; yesterday's file is preserved at `briefs/<yesterday>.md`.
-- If a source MCP isn't connected (e.g., no HubSpot), that section renders as "[Section name]: source not connected — re-run `/diagnose` or connect the MCP and re-run `/brief`." No silent failure.
-- Cost: this command should fit in ~3-5K tokens of synthesis on top of raw connector payloads. Cap each connector payload at a reasonable per-section size (e.g., 12 calendar events max, 7 inbox items max, 12 tasks max).
-- Telemetry: optionally log a single line to core-ops `/log-agent-run` recording (skill: brief, item_counts: {meetings, inbox, tasks, outreach}, runtime_ms). Skip if core-ops isn't installed.
+- **Read-only across all data sources.** No drafts, no task updates, no sends.
+- **Always filter against `surfacing-prefs.md`** before rendering tasks/outreach (Step 0D). Suppressed items never appear; noise-class items never reach P0/P1.
+- **Fixed section order**, identical formatting whether produced by `/brief` or `/end-day` pre-stage.
+- Same-day re-run = refresh + preserve action/annotation state by item id. Different day = new content; yesterday's file preserved.
+- If a source MCP isn't connected, that section renders "[Section]: source not connected — connect the MCP and re-run." No silent failure.
+- Cost: ~3-5K tokens of synthesis on top of connector payloads. Per-section caps: 12 meetings, 12 tasks, 10 outreach.
+- Telemetry: optionally log one line to core-ops `/log-agent-run` (skill: brief, item_counts, filtered_count, runtime_ms). Skip if core-ops isn't installed.
