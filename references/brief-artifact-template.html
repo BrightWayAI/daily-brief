@@ -9,7 +9,7 @@
 </script>
 <!--
   =====================================================================
-  TODAY'S BRIEF — CANONICAL TEMPLATE (daily-brief v0.5.1, spec v2 layout)
+  TODAY'S BRIEF — CANONICAL TEMPLATE (daily-brief v0.5.0, spec v2 layout)
   Reusable, date-agnostic layout for the persistent `todays-brief` Cowork artifact.
   Reference spec: End-Day Routine Improvement Spec (Part A).
 
@@ -46,6 +46,8 @@
     }
   The UI emits outreach actions sent|nudge|skip|let_go. `booked`/`dead` are reader-accepted
   synonyms (/end-day + /process-brief treat dead = let_go) but not rendered by default.
+  Outreach `detail` is reader-OPTIONAL: the v2 UI has no outreach detail prompt, so it's
+  unpopulated here. Readers that defer on `skip` use a default (e.g. 3d) when detail is absent.
 
   Keep the artifact id STABLE as `todays-brief` on every update_artifact call. The skill
   owns the target_date + schema_version metadata + race guard (see brief.md Step 3).
@@ -272,7 +274,8 @@ state.tasks_checked = state.tasks_checked || {};
   }
   tl.appendChild(hours);
   (BLOCKS||[]).forEach(b=>{
-    const left=((b.s-TL_START)/span)*100, width=((b.e-b.s)/span)*100;
+    let left=((b.s-TL_START)/span)*100, width=((b.e-b.s)/span)*100;
+    left=Math.max(0,Math.min(100,left)); width=Math.max(2,Math.min(100-left,width)); // clamp out-of-window events
     const el=document.createElement('div'); el.className='tl-block '+(b.cls||'meeting');
     el.style.left=left+'%'; el.style.width='calc('+width+'% - 2px)'; el.textContent=b.label; tl.appendChild(el);
   });
