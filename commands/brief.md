@@ -172,18 +172,32 @@ Create `<config-root>/briefs/` if missing. Overwrite today's file on re-run; yes
 
 **Artifact identity rule:** the artifact id is ALWAYS `todays-brief`. Both `/brief` and cortex `/end-day` Step 5 `update_artifact` this same surface. Never create a parallel artifact; never produce a markdown-only fallback when Cowork is available. Formatting MUST be identical regardless of which command produced it.
 
-Load `references/brief-artifact-template.html`. Substitute tokens and repeating blocks with today's filtered data:
+Load `references/brief-artifact-template.html` (v2 layout). Substitute these tokens with today's filtered data:
 
-- `{{TODAY_HUMAN}}`, `{{TODAY_LOCAL}}`, `{{GENERATED_AT}}`, `{{LS_KEY}}` = `brief-<today_local>`.
-- `{{HEADER_BADGE}}` = one-line day descriptor. `{{COUNTS_LINE}}` = "N meetings · N tasks · N outreach".
-- `{{COG_TEXT}}` = the Center of Gravity sentence(s).
-- `{{TIMELINE_BLOCKS}}` = one positioned `.tl-block` per event. Compute `left%` and `width%` against an 8:00–18:00 (10-hour) scale: `left = (start_hour − 8)/10 × 100`, `width = duration_hours/10 × 100`. Class by type (`meeting`/`focus`/`personal`/`open`). If zero events, emit `<div class="tl-empty">No meetings today</div>`. Also render light dashed hour ticks if helpful.
-- `<!-- BEGIN/END CALENDAR -->` → one `.cal-item` per event with `{{CAL_TIME}}`, `{{CAL_TITLE}}`, `{{CAL_WHO}}`, `{{CAL_NOTES}}` (omit the `.cal-notes` div if no notes).
-- `<!-- BEGIN/END TASKS -->` → one `.task-row` per task. `data-id="task-<id>"`, `data-name="<title>"`, `{{TASK_PRIORITY}}` = `P0`/`P1`, `{{TASK_PRIORITY_CLASS}}` = `` for P0 or ` p1` for P1. `{{HINT_TASK}}` from config.
-- `<!-- BEGIN/END OUTREACH -->` → emit an `.outreach-tier` label before the first row of each non-empty tier (`Today` / `This week` / `Backlog`), then one `.outreach-row` per contact with `data-id`, `data-name`, `data-signal` (the auto-fill signal, or empty), `{{OUTREACH_LINK}}` = the resolved `research_url`, and `{{OUTREACH_LINK_LABEL}}` = `link_label`.
-- `{{YESTERDAY_REFLECTION_HTML}}` = pre-rendered `.reflect-item` rows, or a placeholder line. `{{REFLECTION_DATE_LABEL}}` = e.g. "Mon 6/8".
+**Header / meta**
+- `{{DATE_LONG}}` = e.g. "Tuesday, June 9". `{{DATE_ISO}}` = `<today_local>` (drives `LS_KEY = brief-<today_local>`).
+- `{{HEADER_BADGE}}` = one-line day descriptor (e.g. "Light calendar · ship the B&S plan").
+- `{{FOOTER_NOTE}}` = e.g. "Run /brief to refresh · /process-brief to act on annotations · actions feed /end-day".
+- `{{META_DESCRIPTION}}` = one-line artifact description. `{{META_MCP_TOOLS}}` / `{{META_MCP_SERVERS}}` = JSON arrays of the runtime's connected calendar/email/CRM MCP tool ids + server names (emit `[]` if none). In Claude Code, drop the whole `<script id="cowork-artifact-meta">` block.
 
-Hide any non-required card whose content is empty by omitting its `<div class="card">`. Center of Gravity and Yesterday's Reflection always render.
+**1. Center of Gravity** — `{{CENTER_OF_GRAVITY}}` = the one-or-two-sentence directive.
+
+**2. Calendar** — feed the visual strip via the `<script>` constants, then repeat the written `.cal-item` block:
+- `{{TL_START_HOUR}}` / `{{TL_END_HOUR}}` = the day window in whole hours (default `8` / `18`). `{{TL_WINDOW_LABEL}}` = e.g. "8a–6p".
+- `{{TL_BLOCKS_JSON}}` = a JS array literal, one object per event, **decimal hours**: `[{s:9.5,e:10,label:'Automation chat',cls:'meeting'},{s:12,e:13,label:'Focus',cls:'focus'}]`. `cls` ∈ `meeting` | `focus` | `personal`. Emit `[]` if no events. (The template's `buildTimeline()` positions blocks against the window — no manual `left%`/`width%`.)
+- Repeat the `.cal-item` block per event: `{{EVENT_TIME}}` (e.g. "9:30–10:00"), `{{EVENT_TITLE}}`, `{{EVENT_WHO}}` (attendees + location), `{{EVENT_NOTES}}` (the one-line context / why-this-matters / last-touch; omit the `.cal-notes` div if no notes).
+
+**3. Priority Tasks** — repeat the `.task-row` block per task (P0/P1 only, post-filter):
+- `data-id="task-<id>"`, `{{TASK_ID}}` = same id, `{{TASK_NAME}}` = title, `{{TASK_PRIORITY}}` = `P0`/`P1`, `{{TASK_PRIORITY_CLASS}}` = `` for P0 or ` p1` for P1, `{{TASK_SUB}}` = one-line context, `{{HINT_TASK}}` = annotation placeholder from config.
+
+**4. Outreach Queue** — repeat the `.outreach-row` block per contact (post-filter, ordered today → this week → backlog):
+- `data-id="outreach-<id>"`, `{{CONTACT_ID}}` = same id, `{{CONTACT_NAME}}`, `{{CONTACT_SUB}}` = title/company · last touch · one-line why.
+- **Signal auto-fill:** in the `.oc-signal` select, emit the contact's pipeline signal as the FIRST `<option>` so it's pre-selected (fall back to `—` first if no signal). Bucket/value-add stay at their template defaults (optional — the user can change them; they're captured on action).
+- `{{CONTACT_LINK}}` = the `research_url` resolved in Step 1; `{{CONTACT_LINK_LABEL}}` = `🔗 LinkedIn` when a real profile URL is known, else `🔍 Research`.
+
+**5. Yesterday's Reflection** — `{{YESTERDAY_LABEL}}` = e.g. "Mon 6/8"; `{{REFLECT_BIGGEST}}` / `{{REFLECT_BLOCKED}}` / `{{REFLECT_ONE_THING}}` from yesterday's `## Reflection` (use "—" for blanks).
+
+Hide any non-required card whose content is empty by omitting its `<div class="card" data-section="...">`. Center of Gravity and Yesterday's Reflection always render. To hide the calendar strip cleanly when there are no events, emit `{{TL_BLOCKS_JSON}}` = `[]` and omit the calendar card.
 
 ### localStorage contract (canonical — schema_version 0.5.0)
 
@@ -194,10 +208,13 @@ ONE JSON blob per day at key `brief-<today_local>`:
   "schema_version": "0.5.0",
   "tasks":            { "<task-id>":    { "action": "done|delegate|skip|not_important", "detail": "", "ts": "", "name": "" } },
   "annotations":      { "<item-id>":    "free text" },
-  "outreach_actions": { "<contact-id>": { "name": "", "action": "sent|skip|nudge|let_go|booked|dead", "bucket": "", "signal": "", "value_add": "", "detail": "", "ts": "" } },
+  "outreach_actions": { "<contact-id>": { "name": "", "action": "sent|nudge|skip|let_go|booked|dead", "bucket": "", "signal": "", "value_add": "", "detail": "", "ts": "" } },
+  "tasks_checked":    { "<task-id>": true },
   "last_interaction_at": "ISO8601"
 }
 ```
+
+`tasks_checked` is a back-compat mirror — the template sets `tasks_checked[id] = (action === "done")` whenever a task action fires, so v0.4.x readers keep working. New readers use `tasks`. The UI emits outreach actions `sent|nudge|skip|let_go`; `booked`/`dead` are reader-accepted synonyms (`dead` = `let_go`) but not rendered by default.
 
 Reader pattern (used by `/process-brief` and `/end-day`):
 

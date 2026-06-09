@@ -20,6 +20,14 @@ Implements Part A of the End-Day Routine Improvement Spec. Coordinated with cort
 
 The old "inbox action items" and "drafts awaiting approval" sections are gone from the canonical surface; the brief is the working surface — mining/drafting happen in `/process-brief` + `/end-day`.
 
+### Template — reconciled to the spec-v2 reference layout (visual source of truth)
+
+`references/brief-artifact-template.html` is now based on the handoff `brief-artifact-template.v2.html` / `todays-brief.reference-2026-06-09.html` (the stated visual source of truth), not the earlier hand-built draft:
+- Visual calendar strip is built in JS from a `BLOCKS` array (`{{TL_BLOCKS_JSON}}`, decimal-hour `{s,e,label,cls}` with cls meeting/focus/personal) + `{{TL_START_HOUR}}`/`{{TL_END_HOUR}}` — the skill fills the array rather than emitting pre-positioned divs.
+- v2 token scheme (`{{DATE_LONG}}`, `{{CENTER_OF_GRAVITY}}`, `{{EVENT_*}}`, `{{TASK_*}}`, `{{CONTACT_*}}`, `{{REFLECT_*}}`, `{{DATE_ISO}}`, `{{FOOTER_NOTE}}`) + a tokenized `cowork-artifact-meta` block (`{{META_DESCRIPTION}}` / `{{META_MCP_TOOLS}}` / `{{META_MCP_SERVERS}}`).
+- Outreach category selects (bucket/signal/value-add) are **always visible**; signal auto-fills by emitting the matching `<option>` first. Outreach buttons are Sent / Nudge / Skip / Let go (Booked dropped from the default render to match the reference; `booked`/`dead` remain reader-accepted synonyms).
+- Preserved contracts: per-task annotation textarea (📝 Annotate toggle) keyed by `data-item-id`; `schema_version:"0.5.0"` + `last_interaction_at`; `tasks_checked` back-compat mirror written on every `done`; the research link (below); target_date race guard owned by the skill.
+
 ### Added — research link per outreach contact
 
 Each outreach row now shows a research link next to the name — a "🔗 LinkedIn" link when a profile URL is known (from the contact's cortex person/bizdev node or the pipeline entry), else a "🔍 Research" link built as a LinkedIn people-search (or web search) from name + company. Always non-empty so every contact is one click from prep. New template tokens `{{OUTREACH_LINK}}` / `{{OUTREACH_LINK_LABEL}}`; the markdown twin includes a `[research](url)` link too.
