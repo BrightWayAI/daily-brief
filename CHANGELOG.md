@@ -4,6 +4,32 @@ All notable changes to daily-brief are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions match `plugin.json`.
 
+## [0.6.0] — Daily-Brief Improvement Spec (D1–D4): sandbox-safe controls, state mirror, reprioritize (2026-07-03)
+
+Implements the daily-brief items of the Daily-Brief Improvement Spec (2026-07-02). Coordinated with cortex v4.13.1.
+
+### Fixed — sandbox-safe action controls (D1)
+
+In the Cowork artifact iframe, **Delegate / Skip / Not important** were dead buttons — they called browser `prompt()`/`confirm()`, which the sandbox silently blocks. All native dialogs removed from `references/brief-artifact-template.html`:
+- **Delegate** → inline `.mini-form` with a text input ("Delegate to whom?") + OK/Cancel (OK requires non-empty input).
+- **Skip** → inline `.mini-form` with a duration `<select>` (1d / 3d / next week) + OK/Cancel.
+- **Not important** → two-tap confirm (button relabels to "🚫 Tap again to confirm" for 4s; second tap commits). No dialog.
+- All paths funnel through a single `commitTask(row, action, detail)` writing the existing localStorage shape. A template-wide invariant comment now forbids `prompt()`/`confirm()`/`alert()`.
+
+### Added — state mirror so `/end-day` can read brief state (D2a)
+
+Cowork exposes no widget-context handle for *persisted* artifacts, so brief clicks were invisible to the close and completed items resurfaced in the next brief. The artifact now mirrors its full localStorage blob to `<config-root>/briefs/<date>.state.json` on every action (via `window.cowork.callMcpTool` when available, else a visible **"Sync for end-day"** button that copies the blob). `/end-day` Step 2c and `/process-brief` read this file first. (The `/end-day` explicit fallback gate for the unreadable case ships in cortex v4.13.1 — D2c.)
+
+### Added — on-the-fly reprioritize (D3)
+
+Each task row now has a P0/P1/P2 priority toggle. It merges `{ priority, reprioritized: true }` into the same `tasks` map without clobbering any disposition `action`; `/end-day` routes it as a source-node priority edit and carries it into tomorrow's ordering. An entry may now have a `priority` with no `action`.
+
+### Changed — schema_version 0.6.0 + template hygiene (D4)
+
+- `schema_version` bumped to `0.6.0` (additive over 0.5.0 — `tasks` entries gain optional `priority` / `reprioritized`; 0.5.0 blobs read unchanged; `tasks_checked` back-compat mirror retained).
+- `.item-tag.p2` styling kept in the canonical template — briefs now legitimately carry approved P2 rows. `/brief` allows user-approved P2 tasks (no auto-promotion).
+- Render discipline tightened: all `{{PLACEHOLDER}}` tokens must be resolved or their block stripped; the HOW-TO comment block is static and must not leak example prose into a generated artifact.
+
 ## [0.5.0] — End-Day Routine Improvement Spec: 5-section brief, richer actions, surfacing-prefs filter (2026-06-08)
 
 Implements Part A of the End-Day Routine Improvement Spec. Coordinated with cortex v4.13.0.

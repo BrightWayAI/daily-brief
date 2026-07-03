@@ -9,24 +9,32 @@
 </script>
 <!--
   =====================================================================
-  TODAY'S BRIEF — CANONICAL TEMPLATE (daily-brief v0.5.0, spec v2 layout)
+  TODAY'S BRIEF — CANONICAL TEMPLATE (daily-brief v0.6.0, spec v2 layout)
   Reusable, date-agnostic layout for the persistent `todays-brief` Cowork artifact.
-  Reference spec: End-Day Routine Improvement Spec (Part A).
+  Reference spec: End-Day Routine Improvement Spec (Part A) + Daily-Brief Improvement Spec 2026-07-02 (D1-D4).
+
+  ▶ SANDBOX INVARIANT (D1): NEVER use prompt() / confirm() / alert() anywhere in this
+    template. Cowork's sandboxed artifact iframe silently blocks native browser dialogs,
+    which makes any control that relies on them a dead button. All confirmation and
+    detail-capture is done with inline DOM controls (.mini-form + two-tap confirm).
 
   Section order is FIXED:
     1 Center of Gravity (accent banner, not interactive)
     2 Calendar (visual timeline strip + written blocks w/ notes)
-    3 Priority Tasks (done / delegate / skip / not_important / annotate)
+    3 Priority Tasks (done / delegate / skip / not_important / reprioritize / annotate)
     4 Outreach Queue (sent / nudge / skip / let_go + bucket/signal/value_add tags
                       + per-contact research link)
     5 Yesterday's Reflection (biggest thing done · blocked · one thing to move)
 
   HOW THE SKILL RENDERS THIS (per /brief or /end-day pre-stage):
-   - Replace every {{PLACEHOLDER}}.
+   - Replace every {{PLACEHOLDER}} with a resolved value. Leave NO literal {{...}} tokens
+     and NO example prose in the generated artifact — strip any unused repeated block.
    - Set LS_KEY via {{DATE_ISO}} → brief-YYYY-MM-DD (must rotate with the date).
    - Repeat the .cal-item / .task-row / .outreach-row blocks per item (data-id unique).
    - Feed the timeline via {{TL_BLOCKS_JSON}} — array of {s,e,label,cls} in DECIMAL hours,
      cls ∈ meeting|focus|personal. Set {{TL_START_HOUR}}/{{TL_END_HOUR}} (default 8/18).
+   - Priority tag class: "" for P0, " p1" for P1, " p2" for P2. P2 rows are legitimate when
+     the user approves them; keep .item-tag.p2 styling in the canonical template.
    - Outreach category auto-fill: emit the matching <option> FIRST in each select so it's
      pre-selected (signal pulled from the pipeline entry; bucket/value-add are optional).
    - cowork-artifact-meta: {{META_DESCRIPTION}} one-liner; {{META_MCP_TOOLS}} and
@@ -34,16 +42,22 @@
      MCP tool ids + server names (emit "[]" / "[]" if none, or drop the whole <script>
      block in Claude Code where Cowork artifact meta is irrelevant).
 
-  localStorage contract (canonical schema_version 0.5.0 — read by /process-brief and
-  /end-day Step 2c via mcp__cowork__read_widget_context(artifact_id="todays-brief")):
+  localStorage contract (canonical schema_version 0.6.0 — read by /process-brief and
+  /end-day Step 2c). D2: state is ALSO mirrored to a readable file on every action (see
+  the mirrorState() call in save()) so /end-day can read brief state even though Cowork
+  exposes no widget-context handle for persisted artifacts:
     {
-      "schema_version": "0.5.0",
-      "tasks":            { "<task-id>":    { "action":"done|delegate|skip|not_important", "detail":"", "ts":"", "name":"" } },
+      "schema_version": "0.6.0",
+      "tasks":            { "<task-id>":    { "action":"done|delegate|skip|not_important", "detail":"", "priority":"P0|P1|P2", "reprioritized":true, "ts":"", "name":"" } },
       "annotations":      { "<item-id>":    "free text" },
       "outreach_actions": { "<contact-id>": { "name":"", "action":"sent|nudge|skip|let_go|booked|dead", "bucket":"", "signal":"", "value_add":"", "detail":"", "ts":"" } },
       "tasks_checked":    { "<task-id>": true },   // back-compat mirror of done actions (v0.4.x readers)
       "last_interaction_at": "ISO8601"
     }
+  A task row can carry BOTH an action and a reprioritization: `reprioritize` merges
+  { priority, reprioritized:true } into the existing tasks[id] entry without clobbering
+  its action (D3). An entry may have `reprioritized` with no `action` (priority changed,
+  no disposition yet) — readers must tolerate a missing `action`.
   The UI emits outreach actions sent|nudge|skip|let_go. `booked`/`dead` are reader-accepted
   synonyms (/end-day + /process-brief treat dead = let_go) but not rendered by default.
   Outreach `detail` is reader-OPTIONAL: the v2 UI has no outreach detail prompt, so it's
@@ -97,6 +111,7 @@
 
   .item-tag { display: inline-block; background: #fee2e2; border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 700; color: #991b1b; margin-left: 6px; vertical-align: middle; }
   .item-tag.p1 { background: #fef3c7; color: #92400e; }
+  .item-tag.p2 { background: #e5e7eb; color: #4b5563; }
 
   .task-row, .outreach-row { padding: 11px 0; border-bottom: 1px solid #f0f0f6; }
   .task-row:last-child, .outreach-row:last-child { border-bottom: none; padding-bottom: 0; }
@@ -113,6 +128,14 @@
   .btn.annotate{color:#4b5563;border-color:#d1d5db;}
   .btn.sent{color:#065f46;border-color:#a7f3d0;} .btn.nudge{color:#92400e;border-color:#fde68a;}
   .btn.letgo{color:#991b1b;border-color:#fecaca;} .btn.skipo{color:#4b5563;}
+  /* D1: inline detail-capture — replaces prompt()/confirm(), which are blocked in the sandbox */
+  .mini-form { display:none; gap:6px; margin-top:8px; align-items:center; flex-wrap:wrap; }
+  .mini-form input, .mini-form select { font-size:12px; border:1px solid #e5e7eb; border-radius:6px; padding:4px 8px; background:#fff; color:#374151; }
+  .mini-form input { min-width:180px; }
+  /* D3: on-the-fly re-prioritize */
+  .reprio { display:inline-flex; align-items:center; gap:4px; margin-left:auto; }
+  .reprio label { font-size:10px; color:#9ca3af; }
+  .reprio select { font-size:11px; border:1px solid #e5e7eb; border-radius:6px; padding:3px 6px; background:#fff; color:#374151; }
   .status { font-size: 11px; font-weight:600; margin-top: 6px; display:none; }
   .row-label.struck { text-decoration: line-through; color: #9ca3af; }
   .row-sub.struck { color: #d1d5db; }
@@ -136,6 +159,11 @@
   .reflect-q { font-weight: 700; color: #4b5563; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
   .reflect-a { color: #374151; margin-top: 2px; }
   .note { font-size: 11px; color: #9ca3af; margin-top: 10px; }
+
+  /* D2(a): manual sync fallback (used only if the artifact can't write the state file itself) */
+  .sync-wrap { margin-top: 14px; text-align:center; }
+  .sync-status { font-size:11px; color:#9ca3af; margin-top:6px; }
+  #sync-blob { display:none; width:100%; min-height:120px; margin-top:10px; padding:9px; border:1px solid #e5e7eb; border-radius:7px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; background:#fbfbfd; }
 </style>
 </head>
 <body>
@@ -175,13 +203,14 @@
   </div>
 </div>
 
-<!-- 3. PRIORITY TASKS (P0/P1 only) — hide card if zero -->
+<!-- 3. PRIORITY TASKS (P0/P1/P2) — hide card if zero -->
 <div class="card" data-section="tasks">
   <div class="card-header red">🔴 Priority Tasks</div>
   <div class="card-body">
 
-    <!-- repeat .task-row per task; data-id unique -->
-    <div class="task-row" data-id="{{TASK_ID}}" data-name="{{TASK_NAME}}">
+    <!-- repeat .task-row per task; data-id unique. {{TASK_PRIORITY_CLASS}} = ""|" p1"|" p2".
+         {{TASK_PRIORITY}} = "P0"|"P1"|"P2" — emit the matching <option> selected in .reprio. -->
+    <div class="task-row" data-id="{{TASK_ID}}" data-name="{{TASK_NAME}}" data-priority="{{TASK_PRIORITY}}">
       <div class="row-label">{{TASK_NAME}} <span class="item-tag{{TASK_PRIORITY_CLASS}}">{{TASK_PRIORITY}}</span></div>
       <div class="row-sub">{{TASK_SUB}}</div>
       <div class="actions">
@@ -190,6 +219,19 @@
         <button class="btn skip" onclick="taskAction(this,'skip')">⏭ Skip</button>
         <button class="btn notimp" onclick="taskAction(this,'not_important')">🚫 Not important</button>
         <button class="btn annotate" onclick="toggleAnnotation(this)">📝 Annotate</button>
+        <span class="reprio"><label>priority</label>
+          <select onchange="reprioritize(this)">
+            <option value="P0"{{P0_SELECTED}}>P0</option>
+            <option value="P1"{{P1_SELECTED}}>P1</option>
+            <option value="P2"{{P2_SELECTED}}>P2</option>
+          </select>
+        </span>
+      </div>
+      <div class="mini-form">
+        <input type="text" placeholder="Delegate to whom? (e.g. Erica)">
+        <select><option>1d</option><option selected>3d</option><option>next week</option></select>
+        <button class="btn" onclick="miniOk(this)">OK</button>
+        <button class="btn" onclick="miniCancel(this)">Cancel</button>
       </div>
       <textarea class="annotation" data-item-id="{{TASK_ID}}" name="{{TASK_ID}}"
                 placeholder="{{HINT_TASK}}" oninput="saveAnnotation('{{TASK_ID}}', this.value)"></textarea>
@@ -248,21 +290,54 @@
   </div>
 </div>
 
+<!-- D2(a): manual sync fallback. Auto-mirror runs on every action; this button is the
+     worst-case path when the artifact has no writable tool exposed. -->
+<div class="sync-wrap">
+  <button class="btn" onclick="manualSync()">🔄 Sync for end-day</button>
+  <div class="sync-status" id="sync-status"></div>
+  <textarea id="sync-blob" readonly></textarea>
+</div>
+
 <p style="font-size:11px;color:#9ca3af;margin-top:8px;text-align:center;">{{FOOTER_NOTE}}</p>
 
 <script>
 const LS_KEY = 'brief-{{DATE_ISO}}';
+const DATE_ISO = '{{DATE_ISO}}';
 // Calendar timeline: window hours + blocks (decimal hours). cls: meeting | focus | personal
 const TL_START = {{TL_START_HOUR}}, TL_END = {{TL_END_HOUR}};
 const BLOCKS = {{TL_BLOCKS_JSON}}; // e.g. [{s:9.5,e:10,label:'Automation chat',cls:'meeting'}]
 
 function load(){ try { return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); } catch(e){ return {}; } }
-function save(s){ s.last_interaction_at = new Date().toISOString(); s.schema_version = '0.5.0'; localStorage.setItem(LS_KEY, JSON.stringify(s)); }
+function save(s){ s.last_interaction_at = new Date().toISOString(); s.schema_version = '0.6.0'; localStorage.setItem(LS_KEY, JSON.stringify(s)); mirrorState(s); }
 let state = load();
 state.tasks = state.tasks || {};
 state.annotations = state.annotations || {};
 state.outreach_actions = state.outreach_actions || {};
 state.tasks_checked = state.tasks_checked || {};
+
+// D2(a) — mirror the full state blob to a readable file so /end-day can consume it.
+// Cowork exposes no widget-context handle for persisted artifacts, so localStorage alone
+// is invisible to the close. If a writable MCP tool is exposed to the artifact, use it;
+// otherwise the manual "Sync for end-day" button surfaces a copyable blob.
+async function mirrorState(s){
+  try {
+    if (window.cowork && typeof window.cowork.callMcpTool === 'function') {
+      await window.cowork.callMcpTool('fs__write_file', {
+        path: 'briefs/' + DATE_ISO + '.state.json',
+        content: JSON.stringify(s, null, 2)
+      });
+      setSync('Synced for end-day · ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}));
+    }
+  } catch(e) { /* non-fatal: manual sync remains available */ }
+}
+function setSync(msg){ const el=document.getElementById('sync-status'); if(el) el.textContent=msg; }
+function manualSync(){
+  const ta=document.getElementById('sync-blob');
+  ta.value = JSON.stringify(state, null, 2);
+  ta.style.display='block'; ta.focus(); ta.select();
+  try { document.execCommand('copy'); setSync('Copied. Paste into end-day if it asks: briefs/'+DATE_ISO+'.state.json'); }
+  catch(e){ setSync('Select all + copy this, then paste into end-day: briefs/'+DATE_ISO+'.state.json'); }
+}
 
 (function buildTimeline(){
   const tl = document.getElementById('timeline'); if(!tl) return;
@@ -296,20 +371,63 @@ function applyTask(row){
   const ta=row.querySelector('textarea.annotation'), id=row.dataset.id;
   if(ta && state.annotations[id]){ ta.value=state.annotations[id]; ta.style.display='block'; }
   const t=state.tasks[id]; if(!t) return;
+  // reflect a stored reprioritization in the dropdown
+  const sel=row.querySelector('.reprio select'); if(sel && t.priority) sel.value=t.priority;
+  if(!t.action) return; // priority-only entry: no disposition to render
   const lbl=row.querySelector('.row-label'),sub=row.querySelector('.row-sub'),st=row.querySelector('.status');
   const struck=(t.action==='done'||t.action==='not_important');
   lbl.classList.toggle('struck',struck); sub.classList.toggle('struck',struck);
   st.style.display='block'; st.style.color=T_COLOR[t.action]||'#374151';
   st.textContent=T_LABEL[t.action]+(t.detail?' · '+t.detail:'')+' · '+t.ts;
 }
+// D1 — sandbox-safe: no prompt()/confirm() (blocked in Cowork's artifact iframe).
+const pendingConfirm={};
 function taskAction(btn,action){
-  const row=btn.closest('.task-row'),id=row.dataset.id; let detail='';
-  if(action==='delegate'){ detail=(prompt('Delegate to whom?','Erica')||'').trim(); if(!detail) return; }
-  else if(action==='skip'){ detail=(prompt('Skip for how long? (1d, 3d, next week)','3d')||'').trim(); }
-  else if(action==='not_important'){ if(!confirm('Mark "not important" and stop surfacing this in future briefs?')) return; }
-  state.tasks[id]={action,detail,ts:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),name:row.dataset.name};
+  const row=btn.closest('.task-row'),id=row.dataset.id;
+  if(action==='delegate'||action==='skip'){ showMini(row,action); return; }
+  if(action==='not_important'){
+    if(!pendingConfirm[id]){
+      pendingConfirm[id]=true; btn.dataset.orig=btn.textContent; btn.textContent='🚫 Tap again to confirm';
+      setTimeout(()=>{ if(pendingConfirm[id]){ delete pendingConfirm[id]; btn.textContent=btn.dataset.orig; } },4000);
+      return;
+    }
+    delete pendingConfirm[id]; btn.textContent=btn.dataset.orig||btn.textContent;
+  }
+  commitTask(row,action,'');
+}
+function showMini(row,action){
+  const mf=row.querySelector('.mini-form'); if(!mf) return;
+  mf.style.display='flex'; mf.dataset.action=action;
+  const inp=mf.querySelector('input'), sel=mf.querySelector('select');
+  inp.style.display=(action==='delegate')?'block':'none';
+  sel.style.display=(action==='skip')?'block':'none';
+  if(action==='delegate') inp.focus();
+}
+function miniOk(btn){
+  const mf=btn.closest('.mini-form'), row=btn.closest('.task-row'), action=mf.dataset.action;
+  const detail=(action==='delegate')?mf.querySelector('input').value.trim():mf.querySelector('select').value;
+  if(action==='delegate'&&!detail){ mf.querySelector('input').focus(); return; }
+  mf.style.display='none';
+  commitTask(row,action,detail);
+}
+function miniCancel(btn){ btn.closest('.mini-form').style.display='none'; }
+function commitTask(row,action,detail){
+  const id=row.dataset.id, prev=state.tasks[id]||{};
+  state.tasks[id]={...prev,action,detail,ts:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),name:row.dataset.name};
   state.tasks_checked[id]=(action==='done'); // back-compat mirror
   save(state); applyTask(row); renderTaskLog(); updateProgress();
+}
+// D3 — re-prioritize in place; merges into tasks[id] without clobbering any action.
+function reprioritize(sel){
+  const row=sel.closest('.task-row'), id=row.dataset.id, priority=sel.value;
+  const orig=row.dataset.priority;
+  const prev=state.tasks[id]||{};
+  if(priority===orig && !prev.action){ delete state.tasks[id]; }
+  else { state.tasks[id]={...prev,priority,reprioritized:priority!==orig,name:row.dataset.name,ts:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}; }
+  // reflect the change in the visible tag
+  const tag=row.querySelector('.item-tag');
+  if(tag){ tag.className='item-tag'+(priority==='P1'?' p1':priority==='P2'?' p2':''); tag.textContent=priority; }
+  save(state); renderTaskLog();
 }
 function toggleAnnotation(btn){
   const ta=btn.closest('.task-row').querySelector('textarea.annotation');
@@ -318,7 +436,10 @@ function toggleAnnotation(btn){
 function saveAnnotation(id,val){ if(val&&val.trim()) state.annotations[id]=val; else delete state.annotations[id]; save(state); }
 function renderTaskLog(){
   const el=document.getElementById('task-log-entries'); const e=Object.entries(state.tasks);
-  el.innerHTML=e.length?e.map(([id,t])=>`<strong>${t.name||id}</strong> → ${t.action}${t.detail?(' ('+t.detail+')'):''} · ${t.ts}`).join(' &nbsp;·&nbsp; '):'<span style="color:#9ca3af;font-style:italic;">no actions yet</span>';
+  el.innerHTML=e.length?e.map(([id,t])=>{
+    const dispo = t.action ? (t.action+(t.detail?(' ('+t.detail+')'):'')) : (t.reprioritized?('→ '+t.priority):'');
+    return `<strong>${t.name||id}</strong> → ${dispo}${dispo&&t.ts?(' · '+t.ts):''}`;
+  }).join(' &nbsp;·&nbsp; '):'<span style="color:#9ca3af;font-style:italic;">no actions yet</span>';
 }
 function applyOutreach(row){
   const o=state.outreach_actions[row.dataset.id]; if(!o) return;
