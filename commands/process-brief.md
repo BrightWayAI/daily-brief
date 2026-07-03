@@ -30,26 +30,28 @@ Read `<config-root>/briefs/<today_local>.md`.
 
 ---
 
-## Step 1 — Read the artifact's current state (v0.5.0 — canonical localStorage shape)
+## Step 1 — Read the artifact's current state (v0.6.0 — canonical localStorage shape)
 
-Locate the Cowork artifact by id `todays-brief`. Call `mcp__cowork__read_widget_context(artifact_id="todays-brief")` to get the current state.
+Read the brief state through this fallback chain, stopping at the first source that yields a blob:
+1. **State-mirror file (primary, v0.6.0):** `<config-root>/briefs/<today_local>.state.json` — the artifact mirrors its full localStorage blob here on every action (D2a). This works even in Claude Code.
+2. **Widget context (legacy):** `mcp__cowork__read_widget_context(artifact_id="todays-brief")` for the entry at key `brief-<today_local>`.
 
-In Claude Code (no Cowork artifact tools available): stop with a clear message — "`/process-brief` requires Cowork artifact tools. In Claude Code, edit `<config-root>/briefs/<today_local>.md` directly and call the relevant draft / update commands manually." This is a known v1 limitation.
+If neither yields state and you're in Claude Code with no mirror file: stop with — "`/process-brief` found no brief state. If you acted in the artifact, click **Sync for end-day** in the brief, or edit `<config-root>/briefs/<today_local>.md` directly."
 
-### Reading the JSON-blob localStorage state (canonical v0.5.0 shape)
+### Reading the JSON-blob state (canonical v0.6.0 shape)
 
-The widget context returns the single localStorage entry at key `brief-<today_local>`. Parse it (per `daily-brief/commands/brief.md` localStorage contract):
+Parse the blob (per `daily-brief/commands/brief.md` localStorage contract):
 
 ```javascript
-const state = JSON.parse(widget_context["brief-<today_local>"] || "{}");
+const state = JSON.parse(mirrorFile || widget_context["brief-<today_local>"] || "{}");
 
-const tasks       = state.tasks || {};            // {task_id: {action: done|delegate|skip|not_important, detail, ts, name}}
+const tasks       = state.tasks || {};            // {task_id: {action: done|delegate|skip|not_important, detail, priority, reprioritized, ts, name}}
 const annotations = state.annotations || {};      // {item_id: free-form-text}
 const outreach    = state.outreach_actions || {}; // {contact_id: {name, action: sent|skip|nudge|let_go|booked|dead, bucket, signal, value_add, detail, ts}}
 const schemaVersion = state.schema_version || "0.4.0";
 ```
 
-**Back-compat:** if you see `state.tasks_checked` (a `{id: bool}` map from v0.4.x) but no `state.tasks`, treat each `true` as `{action: "done"}`. If `schema_version` is newer than `0.5.0`, surface a one-line warning and proceed with the fields you recognize.
+**Back-compat:** if you see `state.tasks_checked` (a `{id: bool}` map from v0.4.x) but no `state.tasks`, treat each `true` as `{action: "done"}`. A `tasks` entry may carry `reprioritized: true` + `priority` with **no `action`** (v0.6.0 priority-only change) — tolerate the missing `action`. If `schema_version` is newer than `0.6.0`, surface a one-line warning and proceed with the fields you recognize.
 
 ### Three streams feed Step 2/3
 

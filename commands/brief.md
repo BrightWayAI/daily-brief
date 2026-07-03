@@ -84,11 +84,11 @@ Meetings are **read-only context cards** (no actions). If zero meetings, hide th
 
 Query CRM (HubSpot MCP if available; otherwise render "CRM not connected" placeholder):
 - Tasks where `owner = current user`, `due_date <= today_local`, `status != completed`.
-- **Keep P0 and P1 only.** P2 and lower do NOT appear — reduces clutter (spec A.1 §3).
+- **Keep P0 and P1 by default.** P2 and lower are excluded to reduce clutter (spec A.1 §3) — **except** P2 items the user has explicitly approved for the brief (e.g. carried forward from a prior `/end-day` tomorrow-priority approval, or reprioritized to P2 in the artifact rather than dropped). Approved P2 rows render with the `p2` tag styling. Never auto-promote unapproved P2s.
 - **Filter against surfacing-prefs** (Step 0D): drop suppressed items; demote noise-class items out of the priority card.
 - Sort: priority desc, then due_date asc. Cap at 12.
 
-For each surviving task capture: stable `task-<id>` id, title, due date, related contact/deal, priority (P0/P1). Each row renders the richer action set (Step A.2: done / delegate / skip / not_important / annotate). Hide the card if zero tasks survive.
+For each surviving task capture: stable `task-<id>` id, title, due date, related contact/deal, priority (P0/P1/approved-P2). Each row renders the richer action set (Step A.2: done / delegate / skip / not_important / annotate) plus a per-row **priority toggle** (P0/P1/P2) that writes a `reprioritize` into the same `tasks` map (v0.6.0, D3). Set `data-priority` on the row to the rendered priority so the toggle knows its baseline. Hide the card if zero tasks survive.
 
 ### Outreach Queue (section 4)
 
@@ -199,14 +199,14 @@ Load `references/brief-artifact-template.html` (v2 layout). Substitute these tok
 
 Hide any non-required card whose content is empty by omitting its `<div class="card" data-section="...">`. Center of Gravity and Yesterday's Reflection always render. To hide the calendar strip cleanly when there are no events, emit `{{TL_BLOCKS_JSON}}` = `[]` and omit the calendar card.
 
-### localStorage contract (canonical — schema_version 0.5.0)
+### localStorage contract (canonical — schema_version 0.6.0)
 
 ONE JSON blob per day at key `brief-<today_local>`:
 
 ```json
 {
-  "schema_version": "0.5.0",
-  "tasks":            { "<task-id>":    { "action": "done|delegate|skip|not_important", "detail": "", "ts": "", "name": "" } },
+  "schema_version": "0.6.0",
+  "tasks":            { "<task-id>":    { "action": "done|delegate|skip|not_important", "detail": "", "priority": "P0|P1|P2", "reprioritized": true, "ts": "", "name": "" } },
   "annotations":      { "<item-id>":    "free text" },
   "outreach_actions": { "<contact-id>": { "name": "", "action": "sent|nudge|skip|let_go|booked|dead", "bucket": "", "signal": "", "value_add": "", "detail": "", "ts": "" } },
   "tasks_checked":    { "<task-id>": true },
@@ -215,6 +215,12 @@ ONE JSON blob per day at key `brief-<today_local>`:
 ```
 
 `tasks_checked` is a back-compat mirror — the template sets `tasks_checked[id] = (action === "done")` whenever a task action fires, so v0.4.x readers keep working. New readers use `tasks`. The UI emits outreach actions `sent|nudge|skip|let_go`; `booked`/`dead` are reader-accepted synonyms (`dead` = `let_go`) but not rendered by default.
+
+**New in 0.6.0 (D3 reprioritize):** a task row can carry an on-the-fly priority change. `reprioritize` merges `{ priority, reprioritized: true }` into the existing `tasks[id]` entry **without clobbering its `action`**. An entry may therefore have `reprioritized: true` + `priority` and **no `action`** (priority changed, no disposition yet) — readers must tolerate a missing `action`.
+
+**New in 0.6.0 (D2a state mirror):** because Cowork exposes no widget-context handle for *persisted* artifacts, the template mirrors this full blob to `<config-root>/briefs/<date>.state.json` on every action (via `window.cowork.callMcpTool`, else the user's manual "Sync for end-day" button). This file is `/end-day`'s canonical read path — see below.
+
+**Sandbox invariant (D1):** the template contains **no** `prompt()`/`confirm()`/`alert()` — Cowork's artifact iframe silently blocks native dialogs, which made Delegate/Skip/Not-important dead buttons before 0.6.0. All detail-capture and confirmation is inline (`.mini-form` + two-tap confirm).
 
 Reader pattern (used by `/process-brief` and `/end-day`):
 
@@ -225,18 +231,18 @@ const annotations = state.annotations || {};          // {item_id: free-text}
 const outreach    = state.outreach_actions || {};     // {contact_id: {name, action, bucket, signal, value_add, detail, ts}}
 ```
 
-**Migration from 0.4.x:** earlier briefs stored `tasks_checked: {id: bool}`. A reader encountering `tasks_checked` but no `tasks` should treat each `true` as `{action: "done"}`. The template's `save()` always writes `schema_version: "0.5.0"` going forward.
+**Migration from 0.4.x:** earlier briefs stored `tasks_checked: {id: bool}`. A reader encountering `tasks_checked` but no `tasks` should treat each `true` as `{action: "done"}`. The template's `save()` always writes `schema_version: "0.6.0"` going forward. (0.5.0 blobs read unchanged — 0.6.0 only adds fields.)
 
-**State is read by `/end-day` Step 2c** (mine the brief) and Step 4.0 (pre-fill reflection) via `mcp__cowork__read_widget_context(artifact_id="todays-brief")`.
+**State is read by `/end-day` Step 2c** (mine the brief) and Step 4.0 (pre-fill reflection). Read order (v0.6.0): the state-mirror file `<config-root>/briefs/<date>.state.json` **first**, then `mcp__cowork__read_widget_context(artifact_id="todays-brief")` as a legacy fallback, then `/end-day`'s explicit fallback gate if neither yields state. The mirror file is authoritative because widget context is empty for persisted artifacts.
 
 ### Decide create vs. update (race-aware)
 
 1. `mcp__cowork__list_artifacts` → look for id `todays-brief`.
 2. If found, check `metadata.target_date`:
-   - `== intended-date` (`today_local` for `/brief`, `tomorrow_local` for `/end-day` Step 5) → `mcp__cowork__update_artifact(artifact_id="todays-brief", content=<HTML>, metadata={target_date, plugin:"daily-brief", schema_version:"0.5.0"})`. Preserve matching annotation/task state by item id (Step 3a).
+   - `== intended-date` (`today_local` for `/brief`, `tomorrow_local` for `/end-day` Step 5) → `mcp__cowork__update_artifact(artifact_id="todays-brief", content=<HTML>, metadata={target_date, plugin:"daily-brief", schema_version:"0.6.0"})`. Preserve matching annotation/task state by item id (Step 3a).
    - `!= intended-date` → DO NOT silently overwrite. Surface: "⚠ `todays-brief` exists with target_date `<existing>`; about to write `<new>`. This is a `/brief`↔`/end-day` race. Proceed (last-write-wins) or abort?" On proceed → update; on abort → exit Step 3.
    - older than `today_local` → update with fresh content (the old day's final state is in its markdown twin).
-3. If not found → `mcp__cowork__create_artifact(id="todays-brief", artifact_type="html", content=<HTML>, metadata={target_date, plugin:"daily-brief", schema_version:"0.5.0"})`.
+3. If not found → `mcp__cowork__create_artifact(id="todays-brief", artifact_type="html", content=<HTML>, metadata={target_date, plugin:"daily-brief", schema_version:"0.6.0"})`.
 
 ### Step 3a — Preserve state across same-day re-runs
 
