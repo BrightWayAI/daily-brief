@@ -33,10 +33,11 @@ Read `<config-root>/briefs/<today_local>.md`.
 ## Step 1 — Read the artifact's current state (v0.6.0 — canonical localStorage shape)
 
 Read the brief state through this fallback chain, stopping at the first source that yields a blob:
-1. **State-mirror file (primary, v0.6.0):** `<config-root>/briefs/<today_local>.state.json` — the artifact mirrors its full localStorage blob here on every action (D2a). This works even in Claude Code.
+1. **State-mirror file (primary, v0.6.0):** `<config-root>/briefs/<today_local>.state.json` — the artifact auto-mirrors its full localStorage blob here on every action **when a filesystem MCP tool was resolved at render time** (v0.6.1 Step 3.0; see `/setup-brief` § Enable brief auto-sync). This works even in Claude Code.
 2. **Widget context (legacy):** `mcp__cowork__read_widget_context(artifact_id="todays-brief")` for the entry at key `brief-<today_local>`.
+3. **Paste path:** ask the user to click **🔄 Sync for end-day** in the brief and paste the copied blob. Validate it parses as a JSON object, write it verbatim to `<config-root>/briefs/<today_local>.state.json` (so `/end-day` benefits too), and proceed as if source 1 succeeded.
 
-If neither yields state and you're in Claude Code with no mirror file: stop with — "`/process-brief` found no brief state. If you acted in the artifact, click **Sync for end-day** in the brief, or edit `<config-root>/briefs/<today_local>.md` directly."
+If the user declines the paste and no source yielded state: stop with — "`/process-brief` found no brief state. If you acted in the artifact, click **Sync for end-day** in the brief, or edit `<config-root>/briefs/<today_local>.md` directly."
 
 ### Reading the JSON-blob state (canonical v0.6.0 shape)
 

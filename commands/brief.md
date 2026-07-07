@@ -172,13 +172,23 @@ Create `<config-root>/briefs/` if missing. Overwrite today's file on re-run; yes
 
 **Artifact identity rule:** the artifact id is ALWAYS `todays-brief`. Both `/brief` and cortex `/end-day` Step 5 `update_artifact` this same surface. Never create a parallel artifact; never produce a markdown-only fallback when Cowork is available. Formatting MUST be identical regardless of which command produced it.
 
+### Step 3.0 — Resolve the state-mirror write tool (D2a, v0.6.1)
+
+The artifact sandbox can only call MCP tools that are (a) fully qualified `mcp__<server>__<tool>`, (b) declared in the artifact's `mcp_tools` allowlist at create/update time, and (c) actually connected to Cowork. There is **no built-in filesystem tool** — auto-sync works only when the user has connected a filesystem-capable MCP server (see `/setup-brief` § Enable brief auto-sync).
+
+1. Scan the session's available MCP tools for a file-write tool (canonical: `mcp__filesystem__write_file` from the reference filesystem server; any server exposing a write-file tool qualifies). Prefer one whose allowed roots cover `<config-root>/briefs/`.
+2. **Verify it this session** (the sandbox bridge requires this discipline — never declare an unverified tool): if `<config-root>/briefs/<today_local>.state.json` is missing, write an empty v0.6.0 blob (`{"schema_version":"0.6.0","tasks":{},"annotations":{},"outreach_actions":{},"tasks_checked":{}}`) through the tool; if it already exists, re-write its current content verbatim. Confirm the write landed. A side benefit: `/end-day` always finds a state file, even on a zero-action day.
+3. On success → `{{FS_WRITE_TOOL}}` = the verified tool name, `{{STATE_MIRROR_PATH}}` = the **absolute** path `<config-root>/briefs/<today_local>.state.json`, and pass `mcp_tools=["<tool>"]` on the Step 3 `create_artifact`/`update_artifact` call. If the verified tool's args differ from `{path, content}`, adapt the `mirrorState()` call in the rendered HTML to match what you verified.
+4. On no tool found (or verify failed) → `{{FS_WRITE_TOOL}}` = `""`, `{{STATE_MIRROR_PATH}}` = the absolute path anyway (harmless), omit `mcp_tools`. The artifact shows a persistent "auto-sync unavailable" banner steering the user to the manual **🔄 Sync for end-day** button, and Step 4's chat message must say so once.
+
 Load `references/brief-artifact-template.html` (v2 layout). Substitute these tokens with today's filtered data:
 
 **Header / meta**
 - `{{DATE_LONG}}` = e.g. "Tuesday, June 9". `{{DATE_ISO}}` = `<today_local>` (drives `LS_KEY = brief-<today_local>`).
 - `{{HEADER_BADGE}}` = one-line day descriptor (e.g. "Light calendar · ship the B&S plan").
 - `{{FOOTER_NOTE}}` = e.g. "Run /brief to refresh · /process-brief to act on annotations · actions feed /end-day".
-- `{{META_DESCRIPTION}}` = one-line artifact description. `{{META_MCP_TOOLS}}` / `{{META_MCP_SERVERS}}` = JSON arrays of the runtime's connected calendar/email/CRM MCP tool ids + server names (emit `[]` if none). In Claude Code, drop the whole `<script id="cowork-artifact-meta">` block.
+- `{{META_DESCRIPTION}}` = one-line artifact description. `{{META_MCP_TOOLS}}` / `{{META_MCP_SERVERS}}` = JSON arrays listing exactly the tools the HTML actually calls: `["<FS_WRITE_TOOL>"]` + its server name when Step 3.0 resolved one, else `[]` / `[]`. (The meta block only drives re-grant prompts on share/import — the live allowlist is the `mcp_tools` param from Step 3.0.) In Claude Code, drop the whole `<script id="cowork-artifact-meta">` block.
+- `{{FS_WRITE_TOOL}}` / `{{STATE_MIRROR_PATH}}` = from Step 3.0.
 
 **1. Center of Gravity** — `{{CENTER_OF_GRAVITY}}` = the one-or-two-sentence directive.
 
@@ -218,7 +228,7 @@ ONE JSON blob per day at key `brief-<today_local>`:
 
 **New in 0.6.0 (D3 reprioritize):** a task row can carry an on-the-fly priority change. `reprioritize` merges `{ priority, reprioritized: true }` into the existing `tasks[id]` entry **without clobbering its `action`**. An entry may therefore have `reprioritized: true` + `priority` and **no `action`** (priority changed, no disposition yet) — readers must tolerate a missing `action`.
 
-**New in 0.6.0 (D2a state mirror):** because Cowork exposes no widget-context handle for *persisted* artifacts, the template mirrors this full blob to `<config-root>/briefs/<date>.state.json` on every action (via `window.cowork.callMcpTool`, else the user's manual "Sync for end-day" button). This file is `/end-day`'s canonical read path — see below.
+**New in 0.6.0 (D2a state mirror), fixed in 0.6.1:** because Cowork exposes no widget-context handle for *persisted* artifacts, the template mirrors this full blob to `<config-root>/briefs/<date>.state.json` on every action. **The mirror is not free:** the sandbox bridge (`window.cowork.callMcpTool`) only reaches a fully-qualified MCP tool that Step 3.0 verified and declared in the artifact's `mcp_tools` allowlist — 0.6.0 shipped with a malformed tool name (`fs__write_file`), no allowlist declaration, and no `isError` check, so auto-sync silently never worked. When no writable tool resolves, the artifact shows a persistent banner steering the user to the manual **🔄 Sync for end-day** button (copies the blob; `/end-day` accepts the paste and writes the state file itself). This file is `/end-day`'s canonical read path — see below.
 
 **Sandbox invariant (D1):** the template contains **no** `prompt()`/`confirm()`/`alert()` — Cowork's artifact iframe silently blocks native dialogs, which made Delegate/Skip/Not-important dead buttons before 0.6.0. All detail-capture and confirmation is inline (`.mini-form` + two-tap confirm).
 
@@ -233,16 +243,18 @@ const outreach    = state.outreach_actions || {};     // {contact_id: {name, act
 
 **Migration from 0.4.x:** earlier briefs stored `tasks_checked: {id: bool}`. A reader encountering `tasks_checked` but no `tasks` should treat each `true` as `{action: "done"}`. The template's `save()` always writes `schema_version: "0.6.0"` going forward. (0.5.0 blobs read unchanged — 0.6.0 only adds fields.)
 
-**State is read by `/end-day` Step 2c** (mine the brief) and Step 4.0 (pre-fill reflection). Read order (v0.6.0): the state-mirror file `<config-root>/briefs/<date>.state.json` **first**, then `mcp__cowork__read_widget_context(artifact_id="todays-brief")` as a legacy fallback, then `/end-day`'s explicit fallback gate if neither yields state. The mirror file is authoritative because widget context is empty for persisted artifacts.
+**State is read by `/end-day` Step 2c** (mine the brief) and Step 4.0 (pre-fill reflection). Read order (v0.6.1 + cortex v4.13.2): the state-mirror file `<config-root>/briefs/<date>.state.json` **first**, then `mcp__cowork__read_widget_context(artifact_id="todays-brief")` as a legacy fallback, then the **paste path** (`/end-day` asks the user to click 🔄 Sync for end-day and paste the blob, writes it to the state file itself), then `/end-day`'s multi-select fallback gate. The mirror file is authoritative because widget context is empty for persisted artifacts.
 
 ### Decide create vs. update (race-aware)
 
 1. `mcp__cowork__list_artifacts` → look for id `todays-brief`.
 2. If found, check `metadata.target_date`:
-   - `== intended-date` (`today_local` for `/brief`, `tomorrow_local` for `/end-day` Step 5) → `mcp__cowork__update_artifact(artifact_id="todays-brief", content=<HTML>, metadata={target_date, plugin:"daily-brief", schema_version:"0.6.0"})`. Preserve matching annotation/task state by item id (Step 3a).
+   - `== intended-date` (`today_local` for `/brief`, `tomorrow_local` for `/end-day` Step 5) → `mcp__cowork__update_artifact(artifact_id="todays-brief", content=<HTML>, mcp_tools=[<FS_WRITE_TOOL from Step 3.0, when resolved>], metadata={target_date, plugin:"daily-brief", schema_version:"0.6.0"})`. Preserve matching annotation/task state by item id (Step 3a).
    - `!= intended-date` → DO NOT silently overwrite. Surface: "⚠ `todays-brief` exists with target_date `<existing>`; about to write `<new>`. This is a `/brief`↔`/end-day` race. Proceed (last-write-wins) or abort?" On proceed → update; on abort → exit Step 3.
    - older than `today_local` → update with fresh content (the old day's final state is in its markdown twin).
-3. If not found → `mcp__cowork__create_artifact(id="todays-brief", artifact_type="html", content=<HTML>, metadata={target_date, plugin:"daily-brief", schema_version:"0.6.0"})`.
+3. If not found → `mcp__cowork__create_artifact(id="todays-brief", artifact_type="html", content=<HTML>, mcp_tools=[<FS_WRITE_TOOL from Step 3.0, when resolved>], metadata={target_date, plugin:"daily-brief", schema_version:"0.6.0"})`.
+
+Always pass `mcp_tools` when Step 3.0 resolved a tool — the allowlist lives in the artifact manifest, and an `update_artifact` that omits it keeps the prior grant (safe), but a `create_artifact` without it leaves the artifact unable to auto-sync until the next update.
 
 ### Step 3a — Preserve state across same-day re-runs
 
@@ -260,6 +272,8 @@ In Claude Code (no Cowork artifact tools): Step 3 degrades to writing the markdo
 Output exactly one chat message:
 
 > "Brief ready for <today_local>. Open the 'Today's Brief' artifact — act on tasks/outreach inline (those actions feed `/end-day`), annotate anything you want drafted, then run `/process-brief`. Markdown twin at `<config-root>/briefs/<today_local>.md`. <N> items filtered by surfacing-prefs."
+
+If Step 3.0 found no write tool, append one sentence: "Note: brief auto-sync is unavailable (no filesystem MCP server connected) — click 🔄 Sync for end-day in the artifact before closing your day, or run `/setup-brief` to enable auto-sync."
 
 Don't dump the brief content into chat.
 

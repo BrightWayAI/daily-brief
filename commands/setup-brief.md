@@ -112,6 +112,28 @@ Single-line yes/no:
 - `brief_enabled: true` — master switch
 - `auto_open_artifact: false` — when /brief runs, also open the artifact tab (Cowork only; default off so the brief regenerates silently)
 
+### Section 7 — Enable brief auto-sync (Cowork only, v0.6.1)
+
+The brief artifact records your done/skip/not-important clicks in its own sandboxed storage. To get them out automatically (so `/end-day` reads them without asking), the artifact needs a **filesystem MCP server** it can call — the Cowork artifact sandbox has no built-in file access.
+
+1. Check whether a file-write MCP tool is already connected (e.g. `mcp__filesystem__write_file`). If yes → tell the user auto-sync is already available; done.
+2. If not, explain the trade-off in one line and offer setup:
+
+> "Optional: brief auto-sync. Without it, you click 🔄 Sync for end-day in the brief before closing your day (one extra click). With it, every action in the brief lands on disk instantly. Enabling it means adding a filesystem MCP server scoped to `<config-root>` — want the config snippet?"
+
+3. If yes, have them add the reference filesystem server to the Claude desktop app's MCP settings (Settings → Extensions/Connectors, or `claude_desktop_config.json` → `mcpServers`), **scoped to `<config-root>` only** — never a broader root:
+
+```json
+"filesystem": {
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem", "<config-root>"]
+}
+```
+
+4. After an app restart, re-run `/brief` — Step 3.0 verifies the tool and switches the artifact to auto-sync (status line shows "Synced for end-day · <time>" after each action instead of the manual-sync banner).
+
+Skippable; the manual Sync button + `/end-day`'s paste path work without it.
+
 ---
 
 ## Step 3 — Write the user-context file
