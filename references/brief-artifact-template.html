@@ -9,7 +9,7 @@
 </script>
 <!--
   =====================================================================
-  TODAY'S BRIEF — CANONICAL TEMPLATE (daily-brief v0.6.0, spec v2 layout)
+  TODAY'S BRIEF — CANONICAL TEMPLATE (daily-brief v0.6.1, spec v2 layout)
   Reusable, date-agnostic layout for the persistent `todays-brief` Cowork artifact.
   Reference spec: End-Day Routine Improvement Spec (Part A) + Daily-Brief Improvement Spec 2026-07-02 (D1-D4).
 
@@ -37,15 +37,27 @@
      the user approves them; keep .item-tag.p2 styling in the canonical template.
    - Outreach category auto-fill: emit the matching <option> FIRST in each select so it's
      pre-selected (signal pulled from the pipeline entry; bucket/value-add are optional).
-   - cowork-artifact-meta: {{META_DESCRIPTION}} one-liner; {{META_MCP_TOOLS}} and
-     {{META_MCP_SERVERS}} are JSON arrays of the runtime's connected calendar/email/CRM
-     MCP tool ids + server names (emit "[]" / "[]" if none, or drop the whole <script>
-     block in Claude Code where Cowork artifact meta is irrelevant).
+   - cowork-artifact-meta: {{META_DESCRIPTION}} one-liner. {{META_MCP_TOOLS}} /
+     {{META_MCP_SERVERS}} list exactly the MCP tools this HTML actually CALLS — that is
+     ["<FS_WRITE_TOOL value>"] + its server name when the state-mirror tool resolved,
+     else "[]" / "[]". This meta block only drives re-grant prompts on share/import;
+     the LIVE allowlist is the mcp_tools param on create_artifact/update_artifact
+     (brief.md Step 3.0) — a tool absent there is rejected at call time regardless of
+     what this block says. Drop the whole <script> block in Claude Code.
+   - Auto-sync tokens (D2a, v0.6.1): {{FS_WRITE_TOOL}} = fully-qualified writable MCP
+     tool name (mcp__<server>__<tool>, e.g. mcp__filesystem__write_file) that /brief
+     VERIFIED this session and declared in mcp_tools — or "" when none is connected
+     (the artifact then shows the persistent manual-sync banner instead).
+     {{STATE_MIRROR_PATH}} = ABSOLUTE path <config-root>/briefs/{{DATE_ISO}}.state.json
+     (the Cowork bridge routes to an MCP server whose cwd is not the config root —
+     relative paths are meaningless here).
 
   localStorage contract (canonical schema_version 0.6.0 — read by /process-brief and
-  /end-day Step 2c). D2: state is ALSO mirrored to a readable file on every action (see
-  the mirrorState() call in save()) so /end-day can read brief state even though Cowork
-  exposes no widget-context handle for persisted artifacts:
+  /end-day Step 2c). D2: state is ALSO mirrored to {{STATE_MIRROR_PATH}} on every action
+  (mirrorState() in save()) so /end-day can read brief state even though Cowork exposes
+  no widget-context handle for persisted artifacts. The mirror only works through a
+  writable MCP tool declared in this artifact's mcp_tools allowlist ({{FS_WRITE_TOOL}});
+  when none resolved, a persistent banner steers the user to the manual Sync button:
     {
       "schema_version": "0.6.0",
       "tasks":            { "<task-id>":    { "action":"done|delegate|skip|not_important", "detail":"", "priority":"P0|P1|P2", "reprioritized":true, "ts":"", "name":"" } },
@@ -290,8 +302,9 @@
   </div>
 </div>
 
-<!-- D2(a): manual sync fallback. Auto-mirror runs on every action; this button is the
-     worst-case path when the artifact has no writable tool exposed. -->
+<!-- D2(a): manual sync fallback. Auto-mirror runs on every action when FS_WRITE_TOOL is
+     set; when it's empty or calls fail, the status line becomes a persistent banner
+     steering the user here before close (/end-day accepts the pasted blob). -->
 <div class="sync-wrap">
   <button class="btn" onclick="manualSync()">🔄 Sync for end-day</button>
   <div class="sync-status" id="sync-status"></div>
@@ -303,6 +316,11 @@
 <script>
 const LS_KEY = 'brief-{{DATE_ISO}}';
 const DATE_ISO = '{{DATE_ISO}}';
+// D2(a) auto-sync: fully-qualified MCP write tool (mcp__<server>__<tool>) that /brief
+// verified this session AND declared in this artifact's mcp_tools allowlist. '' = none
+// available → manual "Sync for end-day" button is the only bridge out of the sandbox.
+const FS_WRITE_TOOL = '{{FS_WRITE_TOOL}}';
+const STATE_MIRROR_PATH = '{{STATE_MIRROR_PATH}}'; // absolute <config-root>/briefs/<date>.state.json
 // Calendar timeline: window hours + blocks (decimal hours). cls: meeting | focus | personal
 const TL_START = {{TL_START_HOUR}}, TL_END = {{TL_END_HOUR}};
 const BLOCKS = {{TL_BLOCKS_JSON}}; // e.g. [{s:9.5,e:10,label:'Automation chat',cls:'meeting'}]
@@ -317,20 +335,25 @@ state.tasks_checked = state.tasks_checked || {};
 
 // D2(a) — mirror the full state blob to a readable file so /end-day can consume it.
 // Cowork exposes no widget-context handle for persisted artifacts, so localStorage alone
-// is invisible to the close. If a writable MCP tool is exposed to the artifact, use it;
-// otherwise the manual "Sync for end-day" button surfaces a copyable blob.
+// is invisible to the close. window.cowork.callMcpTool only reaches fully-qualified
+// tools (mcp__<server>__<tool>) declared in this artifact's mcp_tools allowlist at
+// create/update time, and resolves to {content, structuredContent, isError} WITHOUT
+// throwing on tool errors — so isError must be checked or failures stay invisible.
 async function mirrorState(s){
+  if (!FS_WRITE_TOOL || !window.cowork || typeof window.cowork.callMcpTool !== 'function') { syncDegraded(); return; }
   try {
-    if (window.cowork && typeof window.cowork.callMcpTool === 'function') {
-      await window.cowork.callMcpTool('fs__write_file', {
-        path: 'briefs/' + DATE_ISO + '.state.json',
-        content: JSON.stringify(s, null, 2)
-      });
-      setSync('Synced for end-day · ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}));
-    }
-  } catch(e) { /* non-fatal: manual sync remains available */ }
+    const r = await window.cowork.callMcpTool(FS_WRITE_TOOL, {
+      path: STATE_MIRROR_PATH,
+      content: JSON.stringify(s, null, 2)
+    });
+    if (r && r.isError) { syncDegraded(); return; }
+    setSync('Synced for end-day · ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}));
+  } catch(e) { syncDegraded(); }
 }
+function syncDegraded(){ setSync('⚠️ Auto-sync unavailable — click "🔄 Sync for end-day" before you close, then paste the blob when /end-day asks.'); }
 function setSync(msg){ const el=document.getElementById('sync-status'); if(el) el.textContent=msg; }
+// Surface the degraded state on load, not just after the first lost action.
+if (!FS_WRITE_TOOL || !window.cowork || typeof window.cowork.callMcpTool !== 'function') syncDegraded();
 function manualSync(){
   const ta=document.getElementById('sync-blob');
   ta.value = JSON.stringify(state, null, 2);

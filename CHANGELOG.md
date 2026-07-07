@@ -4,6 +4,29 @@ All notable changes to daily-brief are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/). Versions match `plugin.json`.
 
+## [0.6.1] — Fix D2a state mirror: allowlisted MCP write tool + honest degraded mode (2026-07-07)
+
+Coordinated with cortex v4.13.2. Root-caused by inspecting the Cowork artifact sandbox bridge (`coworkArtifact.js` preload + main-process handlers): the 0.6.0 auto-mirror **never worked** — it failed silently at three independent layers, every day, so no `.state.json` was ever written and `/end-day` always fell back to asking.
+
+### Fixed — auto-mirror uses the sandbox's real mechanism
+
+`window.cowork.callMcpTool` only reaches tools that are (a) fully qualified `mcp__<server>__<tool>`, (b) declared in the artifact's `mcp_tools` allowlist at `create_artifact`/`update_artifact` time, and (c) connected to Cowork as MCP servers. 0.6.0 called a malformed name (`fs__write_file`), declared no allowlist, and no such tool existed. Now:
+
+- **`/brief` Step 3.0 (new):** resolves a file-write MCP tool from the session (canonical: `mcp__filesystem__write_file`), **verifies it by writing the day's `.state.json` once** (empty blob if missing — so `/end-day` always finds a state file, even on a zero-action day), declares it via `mcp_tools` on the create/update call, and injects it into the template as `{{FS_WRITE_TOOL}}` + absolute `{{STATE_MIRROR_PATH}}`.
+- **Template `mirrorState()`:** calls the injected tool, and checks the bridge's `{isError}` result — `callMcpTool` does not throw on tool errors, which is how 0.6.0's failure stayed invisible.
+- **`cowork-artifact-meta`** now lists exactly the tools the HTML calls (share/import re-grant surface), not the unused calendar/email/CRM set.
+
+### Added — honest degraded mode when no write tool is connected
+
+- Persistent status banner ("⚠️ Auto-sync unavailable — click 🔄 Sync for end-day before you close") shown on load and after any failed mirror, instead of silence.
+- `/process-brief` gains the **paste path**: user clicks 🔄 Sync for end-day, pastes the blob, the command validates it and writes `.state.json` itself. (Same path added to `/end-day` Step 2c.0 in cortex v4.13.2.)
+- `/setup-brief` Section 7 (new): optional auto-sync enablement — walks the user through adding a filesystem MCP server scoped to `<config-root>` to the Claude desktop app.
+
+### Notes
+
+- localStorage `schema_version` stays `0.6.0` — the blob shape is unchanged; only the transport out of the sandbox changed.
+- New template tokens: `{{FS_WRITE_TOOL}}`, `{{STATE_MIRROR_PATH}}`.
+
 ## [0.6.0] — Daily-Brief Improvement Spec (D1–D4): sandbox-safe controls, state mirror, reprioritize (2026-07-03)
 
 Implements the daily-brief items of the Daily-Brief Improvement Spec (2026-07-02). Coordinated with cortex v4.13.1.
